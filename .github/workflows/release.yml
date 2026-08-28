@@ -1,0 +1,100 @@
+name: Automated GitHub Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Custom Release Tag (leave empty for auto-increment)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build Next.js standalone application
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: 1
+
+      - name: Package all release artifacts (Win / Mac / Linux / Standalone)
+        run: node scripts/package-release.mjs
+
+      - name: Determine Release Tag & Version
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v1.0.${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Generate Changelog & Release Notes
+        id: release_notes
+        run: |
+          cat << 'EOF' > release_notes.md
+          ## 🎲 D&D Map Projector & Fog of War - Automated Release
+
+          ### 📦 Downloadable Packages:
+          - **`dnd-projector-standalone.html`**: Single-file offline version. Zero dependencies. Double-click to run in Chrome, Safari, Firefox, Edge on **Windows, macOS, or Linux**.
+          - **`dnd-projector-offline-all-os.zip`**: Complete offline bundle including single-click startup scripts (`start-windows.bat`, `start-macos.command`, `start-linux.sh`).
+          - **`dnd-projector-nextjs-server.zip`**: Full Next.js standalone server distribution with OS launchers.
+
+          ### 🚀 Quick Start:
+          1. **Windows**: Unpack zip and double-click `start-windows.bat` or open `dnd-projector-standalone.html`.
+          2. **macOS**: Unpack zip and double-click `start-macos.command` or open `dnd-projector-standalone.html`.
+          3. **Linux**: Unpack zip and run `bash start-linux.sh` or open `dnd-projector-standalone.html`.
+
+          ### ✨ Key Features:
+          - **Dual-Window Sync**: DM Screen with real-time `BroadcastChannel` synchronization to Player/Projector View.
+          - **Fog of War**: Real-time brush (Reveal / Hide), customizable radius, DM opacity control, and solid black player fog.
+          - **Hardware Optimized**: Runs on legacy hardware (e.g. MacBook Air 2010 with GeForce 320M, 2GB RAM) with zero memory leaks.
+          - **Tactical Tools**: Grid overlay, distance ruler in feet/cells, laser pointer pings, and video map support.
+
+          ---
+          *Automated build from commit: ${{ github.sha }}*
+          EOF
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "D&D Map Projector ${{ steps.vars.outputs.tag }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            release-artifacts/dnd-projector-standalone.html
+            release-artifacts/dnd-projector-offline-all-os.zip
+            release-artifacts/dnd-projector-nextjs-server.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
