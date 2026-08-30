@@ -22,6 +22,7 @@ import { SyncController } from '@/lib/sync';
 import { FogEngine } from '@/lib/fog-engine';
 import { PRESET_MAPS } from '@/lib/presets';
 import { PlayerCardOverlay } from '@/components/dnd/PlayerCardOverlay';
+import { resolveMediaUrl } from '@/lib/mediaCache';
 import { Maximize, RefreshCw, EyeOff, Radio } from 'lucide-react';
 
 export const PlayerView: React.FC = () => {
@@ -69,6 +70,13 @@ export const PlayerView: React.FC = () => {
   const fogActionsHistoryRef = useRef<FogAction[]>([]);
   const hasReceivedInitialDMStateRef = useRef<boolean>(false);
 
+  // Актуальные refs для стабильных колбэков
+  const viewportRef = useRef(viewport);
+  const mediaRef = useRef(media);
+
+  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+  useEffect(() => { mediaRef.current = media; }, [media]);
+
   // Функция расчета вписывания карты в окно проектора (Initial auto-fit)
   const calculateAutoFit = useCallback((w: number, h: number): ViewportTransform => {
     if (typeof window === 'undefined') return { x: 0, y: 0, scale: 1 };
@@ -82,7 +90,7 @@ export const PlayerView: React.FC = () => {
 
   // Отправка информации о размерах окна проектора Мастеру (для отображения рамки на столе DM)
   const reportViewportToDM = useCallback((vp: ViewportTransform, med: MediaState) => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !med || med.type === 'none') return;
     const info: PlayerViewportInfo = {
       windowWidth: window.innerWidth,
       windowHeight: window.innerHeight,
@@ -121,24 +129,25 @@ export const PlayerView: React.FC = () => {
   }, [calculateAutoFit, media, reportViewportToDM]);
 
   // Функция применения медиафайла
-  const applyMedia = useCallback((
+  const applyMedia = useCallback(async (
     url: string,
     type: 'image' | 'video',
     name: string,
     width: number = 1600,
     height: number = 1200
   ) => {
-    if (currentObjectUrlRef.current && currentObjectUrlRef.current !== url && currentObjectUrlRef.current.startsWith('blob:')) {
+    const resolvedUrl = await resolveMediaUrl(url);
+    if (currentObjectUrlRef.current && currentObjectUrlRef.current !== resolvedUrl && currentObjectUrlRef.current.startsWith('blob:')) {
       URL.revokeObjectURL(currentObjectUrlRef.current);
       currentObjectUrlRef.current = null;
     }
-    if (url.startsWith('blob:')) {
-      currentObjectUrlRef.current = url;
+    if (resolvedUrl.startsWith('blob:')) {
+      currentObjectUrlRef.current = resolvedUrl;
     }
 
     const newMedia: MediaState = {
       type,
-      url,
+      url: resolvedUrl,
       name,
       width,
       height,
@@ -169,13 +178,13 @@ export const PlayerView: React.FC = () => {
         const targetUrl = state.mediaDataUrl || state.media.url;
         if (targetUrl) {
           applyMedia(targetUrl, state.media.type, state.media.name, state.media.width, state.media.height);
+          const autoVp = calculateAutoFit(state.media.width, state.media.height);
+          setViewport(autoVp);
+          reportViewportToDM(autoVp, state.media);
         }
       }
 
-      // Применяем камеру и сетку
-      if (state.viewport) {
-        setViewport(state.viewport);
-      }
+      // Применяем сетку
       if (state.grid) {
         setGrid(state.grid);
       }
@@ -194,10 +203,6 @@ export const PlayerView: React.FC = () => {
       if (state.pinnedTableCards) {
         setPinnedCards(state.pinnedTableCards);
       }
-
-      if (state.viewport && state.media) {
-        reportViewportToDM(state.viewport, state.media);
-      }
     } else if (msg.type === 'PROJECT_CARD') {
       setProjectedCard(msg.payload.card);
     } else if (msg.type === 'TABLE_CARDS_SYNC') {
@@ -207,10 +212,13 @@ export const PlayerView: React.FC = () => {
       const targetUrl = dataUrl || newMedia.url;
       if (targetUrl && newMedia.type !== 'none') {
         applyMedia(targetUrl, newMedia.type, newMedia.name, newMedia.width, newMedia.height);
+        const autoVp = calculateAutoFit(newMedia.width, newMedia.height);
+        setViewport(autoVp);
+        reportViewportToDM(autoVp, newMedia);
       }
     } else if (msg.type === 'VIEWPORT_SYNC') {
       setViewport(msg.payload);
-      reportViewportToDM(msg.payload, media);
+      reportViewportToDM(msg.payload, mediaRef.current);
     } else if (msg.type === 'FOG_ACTION') {
       const action = msg.payload;
       fogActionsHistoryRef.current.push(action);
@@ -241,7 +249,7 @@ export const PlayerView: React.FC = () => {
     } else if (msg.type === 'HEARTBEAT') {
       setIsSyncConnected(true);
     }
-  }, [applyMedia, media, reportViewportToDM]);
+  }, [applyMedia, calculateAutoFit, reportViewportToDM]);
 
   // 3. Инициализация синхронизации и отправка приветствия PLAYER_READY & REQUEST_FULL_STATE
   useEffect(() => {
@@ -265,7 +273,7 @@ export const PlayerView: React.FC = () => {
         timestamp: Date.now(),
       });
       // Периодически подтверждаем размеры окна Мастеру
-      reportViewportToDM(viewport, media);
+      reportViewportToDM(viewportRef.current, mediaRef.current);
     }, 3000);
 
     // Скрываем подсказку через 6 секунд
@@ -273,7 +281,7 @@ export const PlayerView: React.FC = () => {
 
     // Слушатель изменения размера окна
     const handleResize = () => {
-      reportViewportToDM(viewport, media);
+      reportViewportToDM(viewportRef.current, mediaRef.current);
     };
     window.addEventListener('resize', handleResize);
 
@@ -286,7 +294,7 @@ export const PlayerView: React.FC = () => {
         URL.revokeObjectURL(currentObjectUrlRef.current);
       }
     };
-  }, [handleIncomingMessage, media, reportViewportToDM, viewport]);
+  }, [handleIncomingMessage, reportViewportToDM]);
 
   // Переключение в полноэкранный режим
   const toggleFullScreen = () => {

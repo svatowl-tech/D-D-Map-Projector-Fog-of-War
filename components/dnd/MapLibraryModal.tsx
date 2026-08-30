@@ -83,7 +83,7 @@ export const MapLibraryModal: React.FC<MapLibraryModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80  p-4 sm:p-6 animate-in fade-in duration-200">
       <div
         className="relative w-full max-w-6xl h-[88vh] bg-[#12141a] border border-[#262c3d] rounded-xl shadow-2xl flex flex-col overflow-hidden font-sans text-[#e2e8f0]"
         onClick={(e) => e.stopPropagation()}
@@ -261,18 +261,18 @@ export const MapLibraryModal: React.FC<MapLibraryModalProps> = ({
                         НА СТОЛЕ
                       </span>
                     ) : loc.visited ? (
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#0284c7]/80 text-white backdrop-blur-sm">
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#0284c7]/80 text-white ">
                         Сыграна
                       </span>
                     ) : null}
 
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-black/60 text-[#cbd5e1] backdrop-blur-sm">
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-black/60 text-[#cbd5e1] ">
                       {loc.category}
                     </span>
                   </div>
 
                   {/* Индикатор тумана */}
-                  <div className="absolute bottom-2 left-2 text-[10px] font-mono px-2 py-0.5 rounded bg-black/70 text-[#94a3b8] backdrop-blur-sm flex items-center gap-1">
+                  <div className="absolute bottom-2 left-2 text-[10px] font-mono px-2 py-0.5 rounded bg-black/70 text-[#94a3b8]  flex items-center gap-1">
                     <Eye className="w-3 h-3 text-[#38bdf8]" />
                     <span>
                       {fogRevealsCount > 0

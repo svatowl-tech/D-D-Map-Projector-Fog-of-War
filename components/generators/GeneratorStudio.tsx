@@ -283,7 +283,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
   return (
     <div
       id="generator-studio-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85  p-2 sm:p-4 select-none"
     >
       <div
         className={`flex flex-col bg-[#12141a] border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden transition-all duration-200 ${
@@ -646,7 +646,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
 
           {/* Индикатор загрузки / экспорта */}
           {isExporting && (
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-20">
+            <div className="absolute inset-0 bg-black/60  flex items-center justify-center z-20">
               <div className="flex items-center gap-3 px-5 py-3 bg-slate-900 border border-amber-500/60 rounded-xl text-slate-200 shadow-2xl">
                 <RefreshCw className="w-5 h-5 text-amber-400 animate-spin" />
                 <span className="text-sm font-semibold">Рендеринг и перенос карты на стол...</span>

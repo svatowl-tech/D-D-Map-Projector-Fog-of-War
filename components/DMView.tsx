@@ -41,6 +41,9 @@ import { GeneratorStudio } from '@/components/generators/GeneratorStudio';
 import { CampaignGeneratorSuite } from '@/components/dnd/CampaignGeneratorSuite';
 import { CampaignCardView } from '@/components/dnd/CampaignCardView';
 import { MapLibraryModal } from '@/components/dnd/MapLibraryModal';
+import { UnifiedAssetFolderModal } from '@/components/dm/UnifiedAssetFolderModal';
+import { PolzaAiEngineModal } from '@/components/dm/PolzaAiEngineModal';
+import { processUploadedFiles } from '@/lib/fsSync';
 import { CampaignCard } from '@/lib/dnd-engine/types';
 import {
   Eye,
@@ -53,6 +56,8 @@ import {
   Upload,
   Radio,
   Ruler,
+  HardDrive,
+  Bot,
   FolderOpen,
   Trash2,
   Shield,
@@ -129,6 +134,12 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   // --- Состояние многоэтажной группы (Multi-Floor Group) ---
   const [multiFloorGroup, setMultiFloorGroup] = useState<MultiFloorGroup | null>(null);
 
+  // --- Состояние модального окна Единого Каталога Ресурсов AetherMap_Data ---
+  const [isUnifiedFolderOpen, setIsUnifiedFolderOpen] = useState<boolean>(false);
+
+  // --- Состояние Polza AI Engine & Campaign Studio ---
+  const [isPolzaAiModalOpen, setIsPolzaAiModalOpen] = useState<boolean>(false);
+
   // --- Состояние модального окна Генераторов Карт ---
   const [isGenStudioOpen, setIsGenStudioOpen] = useState<boolean>(false);
   const [activeGenType, setActiveGenType] = useState<GeneratorType>('dwell');
@@ -143,7 +154,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
   // --- Состояние камеры мастера (Pan / Zoom) ---
   const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, scale: 1 });
-  const [syncCameraWithPlayer, setSyncCameraWithPlayer] = useState<boolean>(true);
+  const [syncCameraWithPlayer, setSyncCameraWithPlayer] = useState<boolean>(false);
 
   // --- Состояние экрана игроков и рамки обзора (Player Viewport Frustum) ---
   const [playerViewportInfo, setPlayerViewportInfo] = useState<PlayerViewportInfo | null>(null);
@@ -153,6 +164,8 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   const [brushMode, setBrushMode] = useState<BrushMode>('reveal');
   const [brushSize, setBrushSize] = useState<number>(80);
   const [dmFogOpacity, setDmFogOpacity] = useState<number>(0.55);
+
+  const lastSyncTimeRef = useRef<number>(0);
   const [isFogBaseFilled, setIsFogBaseFilled] = useState<boolean>(false);
 
   // --- Сетка ---
@@ -171,8 +184,23 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
   // --- Статус синхронизации ---
   const [playerConnected, setPlayerConnected] = useState<boolean>(false);
-  const [lastHeartbeat, setLastHeartbeat] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const lastHeartbeatRef = useRef<number>(0);
+
+  // Ссылки на актуальное состояние для стабильных колбэков
+  const mediaRef = useRef(media);
+  const viewportRef = useRef(viewport);
+  const gridRef = useRef(grid);
+  const isFogBaseFilledRef = useRef(isFogBaseFilled);
+  const projectedCardRef = useRef(projectedCard);
+  const pinnedCardsRef = useRef(pinnedCards);
+
+  useEffect(() => { mediaRef.current = media; }, [media]);
+  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+  useEffect(() => { gridRef.current = grid; }, [grid]);
+  useEffect(() => { isFogBaseFilledRef.current = isFogBaseFilled; }, [isFogBaseFilled]);
+  useEffect(() => { projectedCardRef.current = projectedCard; }, [projectedCard]);
+  useEffect(() => { pinnedCardsRef.current = pinnedCards; }, [pinnedCards]);
 
   // --- Линейка и измерения ---
   const [measurement, setMeasurement] = useState<Measurement>({
@@ -266,21 +294,21 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     (msg: SyncMessage) => {
       if (msg.type === 'PLAYER_READY' || msg.type === 'REQUEST_FULL_STATE') {
         setPlayerConnected(true);
-        setLastHeartbeat(Date.now());
+        lastHeartbeatRef.current = Date.now();
         if (msg.type === 'PLAYER_READY') {
           showToast('Экран игроков подключен!');
         }
 
         // Отправляем полный слепок текущего состояния мастерской сессии
         const fullState: DMFullState = {
-          media,
-          mediaDataUrl: media.url?.startsWith('data:') ? media.url : undefined,
-          viewport,
-          grid,
+          media: mediaRef.current,
+          mediaDataUrl: mediaRef.current.url?.startsWith('data:') ? mediaRef.current.url : undefined,
+          viewport: viewportRef.current,
+          grid: gridRef.current,
           fogActions: fogActionsRef.current,
-          fogBaseFilled: isFogBaseFilled,
-          projectedCard,
-          pinnedTableCards: pinnedCards,
+          fogBaseFilled: isFogBaseFilledRef.current,
+          projectedCard: projectedCardRef.current,
+          pinnedTableCards: pinnedCardsRef.current,
         };
 
         syncRef.current?.send({
@@ -290,14 +318,14 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         });
       } else if (msg.type === 'PLAYER_VIEWPORT_INFO') {
         setPlayerConnected(true);
-        setLastHeartbeat(Date.now());
+        lastHeartbeatRef.current = Date.now();
         setPlayerViewportInfo(msg.payload);
       } else if (msg.type === 'HEARTBEAT' && msg.role === 'player') {
         setPlayerConnected(true);
-        setLastHeartbeat(Date.now());
+        lastHeartbeatRef.current = Date.now();
       }
     },
-    [media, viewport, grid, isFogBaseFilled, projectedCard, pinnedCards, showToast]
+    [showToast]
   );
 
   // Действия с карточками D&D (Закрепление, Проекция, Удаление)
@@ -363,7 +391,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       });
 
       // Проверка живости экрана игрока (таймаут 8 сек)
-      if (Date.now() - lastHeartbeat > 8000) {
+      if (lastHeartbeatRef.current > 0 && Date.now() - lastHeartbeatRef.current > 8000) {
         setPlayerConnected(false);
       }
     }, 3000);
@@ -375,7 +403,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         URL.revokeObjectURL(currentObjectUrlRef.current);
       }
     };
-  }, [handleIncomingMessage, lastHeartbeat]);
+  }, [handleIncomingMessage]);
 
   // 5. Подгонка карты мастера под размер контейнера
   const fitMapToScreen = useCallback((w?: number, h?: number) => {
@@ -859,6 +887,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       }
 
       try {
+        await processUploadedFiles([file], isVideo ? 'animated_maps' : 'maps');
         const newLoc = await createLocationFromFile(file);
         setMapLocations((prev) => {
           const updated = [newLoc, ...prev];
@@ -870,7 +899,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
         setMultiFloorGroup(null);
         loadMediaUrl(newLoc.dataUrl || newLoc.url, newLoc.type, newLoc.name, newLoc.width, newLoc.height, newLoc.grid.size);
-        showToast(`✓ Локация «${newLoc.name}» загружена и сохранена в библиотеку`);
+        showToast(`✓ Локация «${newLoc.name}» загружена и индексирована в AetherMap_Data`);
       } catch (err) {
         showToast('Не удалось обработать файл карты');
       }
@@ -1070,6 +1099,8 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     [brushMode, viewport, getMapCoordinates, brushSize]
   );
 
+  const rafRef = useRef<number | null>(null);
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (isDraggingRef.current) {
@@ -1080,21 +1111,36 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           x: dragStartRef.current.vpX + dx,
           y: dragStartRef.current.vpY + dy,
         };
-        setViewport(newVp);
+        
+        if (rafRef.current === null) {
+          rafRef.current = requestAnimationFrame(() => {
+            setViewport(newVp);
+            rafRef.current = null;
+          });
+        }
 
         if (syncCameraWithPlayer) {
-          syncRef.current?.send({
-            type: 'VIEWPORT_SYNC',
-            payload: newVp,
-            timestamp: Date.now(),
-          });
+          const now = Date.now();
+          if (now - lastSyncTimeRef.current > 40) {
+            lastSyncTimeRef.current = now;
+            syncRef.current?.send({
+              type: 'VIEWPORT_SYNC',
+              payload: newVp,
+              timestamp: now,
+            });
+          }
         }
         return;
       }
 
       if (measurement.active) {
         const coords = getMapCoordinates(e.clientX, e.clientY);
-        setMeasurement((m) => ({ ...m, currentX: coords.x, currentY: coords.y }));
+        if (rafRef.current === null) {
+          rafRef.current = requestAnimationFrame(() => {
+            setMeasurement((m) => ({ ...m, currentX: coords.x, currentY: coords.y }));
+            rafRef.current = null;
+          });
+        }
         return;
       }
 
@@ -1171,11 +1217,15 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       setViewport(newVp);
 
       if (syncCameraWithPlayer) {
-        syncRef.current?.send({
-          type: 'VIEWPORT_SYNC',
-          payload: newVp,
-          timestamp: Date.now(),
-        });
+        const now = Date.now();
+        if (now - lastSyncTimeRef.current > 40) {
+          lastSyncTimeRef.current = now;
+          syncRef.current?.send({
+            type: 'VIEWPORT_SYNC',
+            payload: newVp,
+            timestamp: now,
+          });
+        }
       }
     },
     [viewport, syncCameraWithPlayer]
@@ -1368,6 +1418,29 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
             <Sparkles className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Генераторы карт</span>
             <span className="sm:hidden">Генератор</span>
+          </button>
+
+          {/* Кнопка открытия Polza AI Engine & Campaign Studio */}
+          <button
+            id="btn-open-polza-ai"
+            onClick={() => setIsPolzaAiModalOpen(true)}
+            className="px-2.5 py-1 bg-gradient-to-r from-purple-700 via-indigo-600 to-[#ff4e00] hover:opacity-90 text-white font-bold text-[11px] rounded uppercase transition-all shadow-md flex items-center gap-1.5 cursor-pointer border border-purple-400/40"
+            title="Открыть JSON AI Engine, Full Campaign Engine и ИИ-Генератор иллюстраций (/api/polza)"
+          >
+            <Bot className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+            <span className="hidden lg:inline">JSON AI & Campaign Engine</span>
+            <span className="lg:hidden">AI Studio</span>
+          </button>
+
+          {/* Кнопка открытия единого каталога AetherMap_Data */}
+          <button
+            id="btn-open-aether-data"
+            onClick={() => setIsUnifiedFolderOpen(true)}
+            className="px-2.5 py-1 bg-[#ff4e00]/10 hover:bg-[#ff4e00]/20 text-[#ff4e00] border border-[#ff4e00]/40 text-[11px] font-semibold rounded uppercase transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Открыть структуру и реестр локальных ресурсов AetherMap_Data"
+          >
+            <HardDrive className="w-3.5 h-3.5" />
+            <span className="hidden lg:inline">AetherMap_Data</span>
           </button>
 
           {/* Кнопка открытия окна игроков */}
@@ -1848,7 +1921,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           {multiFloorGroup && multiFloorGroup.floors.length > 1 && (
             <div
               id="multi-floor-bar"
-              className="absolute top-3 left-1/2 transform -translate-x-1/2 z-30 flex items-center gap-1 bg-[#12141a]/95 border border-amber-500/60 rounded-xl p-1 shadow-2xl backdrop-blur"
+              className="absolute top-3 left-1/2 transform -translate-x-1/2 z-30 flex items-center gap-1 bg-[#12141a]/95 border border-amber-500/60 rounded-xl p-1 shadow-2xl "
             >
               <div className="px-2 py-0.5 text-[10px] text-amber-400 font-bold uppercase flex items-center gap-1 border-r border-slate-700 mr-1">
                 <Layers className="w-3 h-3" />
@@ -1925,7 +1998,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           {projectedCard && (
             <div
               id="active-projection-indicator"
-              className="absolute top-14 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 bg-amber-950/90 border border-amber-500/80 rounded-full shadow-2xl backdrop-blur text-xs font-semibold text-amber-200 animate-pulse"
+              className="absolute top-14 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 bg-amber-950/90 border border-amber-500/80 rounded-full shadow-2xl  text-xs font-semibold text-amber-200 animate-pulse"
             >
               <Eye className="w-4 h-4 text-amber-400" />
               <span>Проекция на экран игроков:</span>
@@ -1946,7 +2019,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               id="dm-pinned-cards-deck"
               className="absolute bottom-4 right-4 z-30 flex flex-col items-end max-w-md"
             >
-              <div className="bg-[#14161d]/95 border border-amber-600/50 rounded-xl shadow-2xl p-2.5 backdrop-blur w-full">
+              <div className="bg-[#14161d]/95 border border-amber-600/50 rounded-xl shadow-2xl p-2.5  w-full">
                 <div className="flex items-center justify-between gap-3 mb-1.5 pb-1 border-b border-slate-800">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400 uppercase tracking-wider">
                     <Pin className="w-3.5 h-3.5" />
@@ -2106,7 +2179,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
                 {/* Плавающий бейдж с телеметрией проектора */}
                 <div
-                  className="absolute top-2 left-2 bg-[#090d16]/95 border border-[#38bdf8]/80 text-[#38bdf8] text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-xl flex items-center gap-1.5 uppercase backdrop-blur-md"
+                  className="absolute top-2 left-2 bg-[#090d16]/95 border border-[#38bdf8]/80 text-[#38bdf8] text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-xl flex items-center gap-1.5 uppercase "
                   style={{
                     transform: `scale(${Math.max(0.5, 1 / viewport.scale)})`,
                     transformOrigin: 'top left',
@@ -2196,7 +2269,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       {isCampaignSuiteOpen && (
         <div
           id="dnd-campaign-suite-modal"
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85  animate-in fade-in duration-200"
         >
           <div className="relative w-full max-w-7xl h-[90vh] bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
             <button
@@ -2225,7 +2298,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       {activePinnedCardModal && (
         <div
           id="pinned-card-inspector-modal"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80  animate-in fade-in"
         >
           <div className="relative w-full max-w-2xl bg-neutral-950 border border-neutral-800 rounded-2xl p-4 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4 border-b border-neutral-800 pb-3">
@@ -2261,6 +2334,33 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           </div>
         </div>
       )}
+      {/* 8. Единый каталог ресурсов AetherMap_Data */}
+      <UnifiedAssetFolderModal
+        isOpen={isUnifiedFolderOpen}
+        onClose={() => setIsUnifiedFolderOpen(false)}
+        onSelectMap={(location) => {
+          if (location.url) {
+            loadMediaUrl(
+              location.url,
+              location.type || 'image',
+              location.name || 'Карта',
+              location.width || 1920,
+              location.height || 1080,
+              location.grid?.size
+            );
+            showToast(`Активирован ресурс из AetherMap_Data: ${location.name}`);
+          }
+        }}
+      />
+      {/* 9. Polza AI Engine & Full Campaign Studio */}
+      <PolzaAiEngineModal
+        isOpen={isPolzaAiModalOpen}
+        onClose={() => setIsPolzaAiModalOpen(false)}
+        onApplyArtToMap={(url, name) => {
+          loadMediaUrl(url, 'image', name, 1920, 1080);
+          showToast(`ИИ-Арт активирован на столе: ${name}`);
+        }}
+      />
     </div>
   );
 };

@@ -16,7 +16,7 @@ export function PlayerCardOverlay({ card, onDismiss }: PlayerCardOverlayProps) {
   return (
     <div
       id="player-projected-card-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-md transition-all duration-300 animate-in fade-in zoom-in-95"
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80  transition-all duration-300 animate-in fade-in zoom-in-95"
     >
       <div className="relative max-w-2xl w-full flex flex-col items-center">
         {/* Subtle decorative glow & banner */}
