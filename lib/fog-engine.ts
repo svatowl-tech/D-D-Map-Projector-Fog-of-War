@@ -111,7 +111,7 @@ export class FogEngine {
   /**
    * Полное воспроизведение списка действий тумана
    */
-  public replayActions(actions: FogAction[], baseFilled: boolean = true) {
+  public replayActions(actions: FogAction[], baseFilled: boolean = false) {
     this.clearAll();
     if (baseFilled) {
       this.fillAll();

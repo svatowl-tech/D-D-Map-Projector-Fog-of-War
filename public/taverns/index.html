@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	
+	<meta charset="utf-8">
+	
+	<title>Taverns</title>
+	
+	<meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<meta name="mobile-web-app-capable" content="yes">
+	
+	
+	<link rel="shortcut icon" type="image/png" href="./favicon.png">
+	
+	
+	<script type="text/javascript" src="./Taverns.js"></script>
+	
+	<script>
+		// PostMessage and SaveAs Interception Bridge for Tabletop Import
+		(function() {
+			var origSaveAs = window.saveAs;
+			window.saveAs = function(blob, filename, disableAutoBOM) {
+				var reader = new FileReader();
+				reader.onload = function(e) {
+					var dataUrl = e.target.result;
+					var img = new Image();
+					img.onload = function() {
+						var msg = {
+							type: 'TAVERN_MAP_EXPORT',
+							dataUrl: dataUrl,
+							filename: filename || 'Tavern_Map',
+							width: img.naturalWidth || 1400,
+							height: img.naturalHeight || 1400
+						};
+						if (window.parent && window.parent !== window) {
+							window.parent.postMessage(msg, '*');
+						}
+						if (window.top && window.top !== window && window.top !== window.parent) {
+							window.top.postMessage(msg, '*');
+						}
+					};
+					img.src = dataUrl;
+				};
+				reader.readAsDataURL(blob);
+
+				if (window.__triggerFileDownload && origSaveAs) {
+					origSaveAs(blob, filename, disableAutoBOM);
+				}
+			};
+
+			function dispatchKey(code, shift) {
+				var eDown = new KeyboardEvent('keydown', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				window.dispatchEvent(eDown);
+				setTimeout(function() {
+					var eUp = new KeyboardEvent('keyup', {
+						keyCode: code,
+						which: code,
+						shiftKey: !!shift,
+						bubbles: true,
+						cancelable: true
+					});
+					window.dispatchEvent(eUp);
+				}, 40);
+			}
+
+			window.addEventListener('message', function(event) {
+				if (!event.data || !event.data.action) return;
+				var action = event.data.action;
+				if (action === 'GENERATE') {
+					dispatchKey(13); // Enter
+				} else if (action === 'FLOOR_UP') {
+					dispatchKey(38); // Up Arrow
+				} else if (action === 'FLOOR_DOWN') {
+					dispatchKey(40); // Down Arrow
+				} else if (action === 'TOGGLE_PROPS') {
+					dispatchKey(80); // P
+				} else if (action === 'TOGGLE_SHADOWS') {
+					dispatchKey(83); // S
+				} else if (action === 'TOGGLE_BW') {
+					dispatchKey(66); // B
+				} else if (action === 'RANDOM_STYLE') {
+					dispatchKey(67, false); // C
+				} else if (action === 'RESET_STYLE') {
+					dispatchKey(67, true); // Shift + C
+				} else if (action === 'EXPORT_FLOOR') {
+					window.__triggerFileDownload = !!event.data.download;
+					dispatchKey(88, false); // X
+				} else if (action === 'EXPORT_FULL') {
+					window.__triggerFileDownload = !!event.data.download;
+					dispatchKey(88, true); // Shift + X
+				}
+			});
+		})();
+
+		window.addEventListener ("touchmove", function (event) { event.preventDefault (); }, { capture: false, passive: false });
+		if (typeof window.devicePixelRatio != 'undefined' && window.devicePixelRatio > 2) {
+			var meta = document.getElementById ("viewport");
+			meta.setAttribute ('content', 'width=device-width, initial-scale=' + (2 / window.devicePixelRatio) + ', user-scalable=no');
+		}
+	</script>
+	
+	<style>
+		html,body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+		#openfl-content { background: #000000; width: 100%; height: 100%; }
+		@font-face {
+			font-family: 'Goudy Bookletter 1911';
+			src: url('Assets/GoudyBookletter1911-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/GoudyBookletter1911-Regular.woff') format('woff'),
+			url('Assets/GoudyBookletter1911-Regular.ttf') format('truetype'),
+			url('Assets/GoudyBookletter1911-Regular.svg#Goudy%20Bookletter%201911') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+
+	</style>
+	
+</head>
+<body>
+	
+	<noscript>This webpage makes extensive use of JavaScript. Please enable JavaScript in your web browser to view this page.</noscript>
+	
+	<div id="openfl-content"></div>
+	
+	<script type="text/javascript">
+		lime.embed ("Taverns", "openfl-content", 0, 0, { parameters: {} });
+	</script>
+	
+</body>
+</html>

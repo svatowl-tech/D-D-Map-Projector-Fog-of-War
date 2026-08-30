@@ -15,11 +15,14 @@ import {
   PingMarker,
   SyncMessage,
   DMFullState,
+  PlayerViewportInfo,
 } from '@/lib/types';
+import { CampaignCard } from '@/lib/dnd-engine/types';
 import { SyncController } from '@/lib/sync';
 import { FogEngine } from '@/lib/fog-engine';
 import { PRESET_MAPS } from '@/lib/presets';
-import { Maximize, RefreshCw, EyeOff } from 'lucide-react';
+import { PlayerCardOverlay } from '@/components/dnd/PlayerCardOverlay';
+import { Maximize, RefreshCw, EyeOff, Radio } from 'lucide-react';
 
 export const PlayerView: React.FC = () => {
   // Состояние медиа карты
@@ -32,6 +35,10 @@ export const PlayerView: React.FC = () => {
     aspectRatio: PRESET_MAPS[0].width / PRESET_MAPS[0].height,
   });
   const currentObjectUrlRef = useRef<string | null>(null);
+
+  // Состояние спроецированной карточки от Мастера
+  const [projectedCard, setProjectedCard] = useState<CampaignCard | null>(null);
+  const [pinnedCards, setPinnedCards] = useState<CampaignCard[]>([]);
 
   // Состояние камеры
   const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, scale: 1 });
@@ -58,20 +65,60 @@ export const PlayerView: React.FC = () => {
   const fogCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fogEngineRef = useRef<FogEngine | null>(null);
   const syncRef = useRef<SyncController | null>(null);
-  const isFogBaseFilledRef = useRef<boolean>(true);
+  const isFogBaseFilledRef = useRef<boolean>(false);
   const fogActionsHistoryRef = useRef<FogAction[]>([]);
+  const hasReceivedInitialDMStateRef = useRef<boolean>(false);
+
+  // Функция расчета вписывания карты в окно проектора (Initial auto-fit)
+  const calculateAutoFit = useCallback((w: number, h: number): ViewportTransform => {
+    if (typeof window === 'undefined') return { x: 0, y: 0, scale: 1 };
+    const winW = window.innerWidth || 1920;
+    const winH = window.innerHeight || 1080;
+    const scale = Math.min(winW / w, winH / h) * 0.98;
+    const x = Math.round((winW - w * scale) / 2);
+    const y = Math.round((winH - h * scale) / 2);
+    return { x, y, scale };
+  }, []);
+
+  // Отправка информации о размерах окна проектора Мастеру (для отображения рамки на столе DM)
+  const reportViewportToDM = useCallback((vp: ViewportTransform, med: MediaState) => {
+    if (typeof window === 'undefined') return;
+    const info: PlayerViewportInfo = {
+      windowWidth: window.innerWidth,
+      windowHeight: window.innerHeight,
+      viewport: vp,
+      mapWidth: med.width,
+      mapHeight: med.height,
+      aspectRatio: med.width / med.height,
+    };
+    syncRef.current?.send({
+      type: 'PLAYER_VIEWPORT_INFO',
+      payload: info,
+      timestamp: Date.now(),
+    });
+  }, []);
 
   // 1. Инициализация движка 100% непрозрачного тумана
   useEffect(() => {
     if (fogCanvasRef.current) {
-      // isDM = false -> непрозрачный туман
       fogEngineRef.current = new FogEngine(fogCanvasRef.current, false);
       fogEngineRef.current.resize(media.width, media.height);
       if (isFogBaseFilledRef.current) {
         fogEngineRef.current.fillAll();
+      } else {
+        fogEngineRef.current.clearAll();
       }
     }
   }, []);
+
+  // Начальная авто-подгонка вьюпорта
+  useEffect(() => {
+    if (!hasReceivedInitialDMStateRef.current) {
+      const initVp = calculateAutoFit(media.width, media.height);
+      setViewport(initVp);
+      reportViewportToDM(initVp, media);
+    }
+  }, [calculateAutoFit, media, reportViewportToDM]);
 
   // Функция применения медиафайла
   const applyMedia = useCallback((
@@ -89,19 +136,23 @@ export const PlayerView: React.FC = () => {
       currentObjectUrlRef.current = url;
     }
 
-    setMedia({
+    const newMedia: MediaState = {
       type,
       url,
       name,
       width,
       height,
       aspectRatio: width / height,
-    });
+    };
+
+    setMedia(newMedia);
 
     if (fogEngineRef.current && fogCanvasRef.current) {
       fogEngineRef.current.resize(width, height);
       if (isFogBaseFilledRef.current) {
         fogEngineRef.current.fillAll();
+      } else {
+        fogEngineRef.current.clearAll();
       }
     }
   }, []);
@@ -111,6 +162,7 @@ export const PlayerView: React.FC = () => {
     if (msg.type === 'DM_STATE_FULL') {
       const state: DMFullState = msg.payload;
       setIsSyncConnected(true);
+      hasReceivedInitialDMStateRef.current = true;
 
       // Применяем медиа
       if (state.media && state.media.type !== 'none') {
@@ -121,8 +173,12 @@ export const PlayerView: React.FC = () => {
       }
 
       // Применяем камеру и сетку
-      if (state.viewport) setViewport(state.viewport);
-      if (state.grid) setGrid(state.grid);
+      if (state.viewport) {
+        setViewport(state.viewport);
+      }
+      if (state.grid) {
+        setGrid(state.grid);
+      }
 
       // Применяем туман
       isFogBaseFilledRef.current = state.fogBaseFilled;
@@ -130,6 +186,22 @@ export const PlayerView: React.FC = () => {
       if (fogEngineRef.current) {
         fogEngineRef.current.replayActions(fogActionsHistoryRef.current, state.fogBaseFilled);
       }
+
+      // Применяем спроецированную карточку и карточки стола
+      if (state.projectedCard !== undefined) {
+        setProjectedCard(state.projectedCard);
+      }
+      if (state.pinnedTableCards) {
+        setPinnedCards(state.pinnedTableCards);
+      }
+
+      if (state.viewport && state.media) {
+        reportViewportToDM(state.viewport, state.media);
+      }
+    } else if (msg.type === 'PROJECT_CARD') {
+      setProjectedCard(msg.payload.card);
+    } else if (msg.type === 'TABLE_CARDS_SYNC') {
+      setPinnedCards(msg.payload.cards);
     } else if (msg.type === 'MEDIA_CHANGE') {
       const { media: newMedia, dataUrl } = msg.payload;
       const targetUrl = dataUrl || newMedia.url;
@@ -138,6 +210,7 @@ export const PlayerView: React.FC = () => {
       }
     } else if (msg.type === 'VIEWPORT_SYNC') {
       setViewport(msg.payload);
+      reportViewportToDM(msg.payload, media);
     } else if (msg.type === 'FOG_ACTION') {
       const action = msg.payload;
       fogActionsHistoryRef.current.push(action);
@@ -168,15 +241,19 @@ export const PlayerView: React.FC = () => {
     } else if (msg.type === 'HEARTBEAT') {
       setIsSyncConnected(true);
     }
-  }, [applyMedia]);
+  }, [applyMedia, media, reportViewportToDM]);
 
-  // 3. Инициализация синхронизации и отправка приветствия PLAYER_READY
+  // 3. Инициализация синхронизации и отправка приветствия PLAYER_READY & REQUEST_FULL_STATE
   useEffect(() => {
     syncRef.current = new SyncController(handleIncomingMessage);
 
-    // Уведомляем Мастера о готовности окна игроков
+    // Уведомляем Мастера о готовности окна игроков и запрашиваем актуальное состояние
     syncRef.current.send({
       type: 'PLAYER_READY',
+      timestamp: Date.now(),
+    });
+    syncRef.current.send({
+      type: 'REQUEST_FULL_STATE',
       timestamp: Date.now(),
     });
 
@@ -187,20 +264,29 @@ export const PlayerView: React.FC = () => {
         role: 'player',
         timestamp: Date.now(),
       });
+      // Периодически подтверждаем размеры окна Мастеру
+      reportViewportToDM(viewport, media);
     }, 3000);
 
     // Скрываем подсказку через 6 секунд
     const hintTimer = setTimeout(() => setShowHint(false), 6000);
 
+    // Слушатель изменения размера окна
+    const handleResize = () => {
+      reportViewportToDM(viewport, media);
+    };
+    window.addEventListener('resize', handleResize);
+
     return () => {
       clearInterval(interval);
       clearTimeout(hintTimer);
+      window.removeEventListener('resize', handleResize);
       syncRef.current?.destroy();
       if (currentObjectUrlRef.current && currentObjectUrlRef.current.startsWith('blob:')) {
         URL.revokeObjectURL(currentObjectUrlRef.current);
       }
     };
-  }, [handleIncomingMessage]);
+  }, [handleIncomingMessage, media, reportViewportToDM, viewport]);
 
   // Переключение в полноэкранный режим
   const toggleFullScreen = () => {
@@ -226,16 +312,21 @@ export const PlayerView: React.FC = () => {
     <div
       id="player-app-container"
       ref={containerRef}
-      className="relative w-screen h-screen overflow-hidden bg-[#000] text-[#E0E0E0] font-mono select-none cursor-default"
+      className="relative w-screen h-screen overflow-hidden bg-[#090b10] text-[#E0E0E0] font-mono select-none cursor-default"
       onDoubleClick={toggleFullScreen}
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* Временная подсказка управления для проектора (High Density Badge) */}
       {showHint && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#121212]/90 text-[#888] text-[11px] px-3.5 py-1.5 rounded border border-[#2A2A2A] shadow-2xl flex items-center gap-2 pointer-events-none transition-opacity duration-1000 uppercase font-mono">
-          <Maximize className="w-3.5 h-3.5 text-[#FF4E00]" />
-          <span>
-            PLAYER VIEW ACTIVE // PRESS <strong className="text-[#FF4E00]">F</strong> OR DOUBLE-CLICK FOR FULLSCREEN
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#12141a]/95 text-[#94a3b8] text-[11px] px-4 py-2 rounded-lg border border-[#262c3d] shadow-2xl flex items-center gap-3 pointer-events-none transition-opacity duration-1000 uppercase font-mono">
+          <div className="flex items-center gap-1.5 text-[#38bdf8]">
+            <Radio className="w-3.5 h-3.5 animate-pulse text-[#10b981]" />
+            <span className="font-bold text-white">ПРОЕКТОР АКТИВЕН</span>
+          </div>
+          <span className="text-[#64748b]">|</span>
+          <span className="flex items-center gap-1">
+            <Maximize className="w-3.5 h-3.5 text-[#ff4e00]" />
+            НАЖМИТЕ <strong className="text-white">F</strong> ДЛЯ FULLSCREEN
           </span>
         </div>
       )}
@@ -254,7 +345,7 @@ export const PlayerView: React.FC = () => {
         {media.type === 'image' && media.url && (
           <img
             src={media.url}
-            alt="Map"
+            alt={media.name || 'Battle Map'}
             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
             draggable={false}
           />
@@ -306,6 +397,9 @@ export const PlayerView: React.FC = () => {
           ))}
         </svg>
       </div>
+
+      {/* Оверлей спроецированной карточки монстра/предмета/NPC/заклинания */}
+      <PlayerCardOverlay card={projectedCard} onDismiss={() => setProjectedCard(null)} />
     </div>
   );
 };

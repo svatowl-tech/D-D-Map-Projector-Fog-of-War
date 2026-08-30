@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Medieval Fantasy City Generator</title>
+	
+	<meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	
+	<link rel="shortcut icon" type="image/png" href="./favicon.png">
+	<script type="text/javascript" src="./mfcg.js"></script>
+	
+	<script>
+		// PostMessage and SaveAs Interception Bridge for Tabletop Import
+		(function() {
+			var origSaveAs = null;
+			function customSaveAs(blob, filename, disableAutoBOM) {
+				var reader = new FileReader();
+				reader.onload = function(e) {
+					var dataUrl = e.target.result;
+					if (blob.type && blob.type.indexOf('image/png') !== -1) {
+						var img = new Image();
+						img.onload = function() {
+							var msg = {
+								type: 'CITY_MAP_EXPORT',
+								dataUrl: dataUrl,
+								filename: filename || 'City_Map',
+								width: img.naturalWidth || 2048,
+								height: img.naturalHeight || 2048,
+								format: 'png'
+							};
+							if (window.parent && window.parent !== window) {
+								window.parent.postMessage(msg, '*');
+							}
+							if (window.top && window.top !== window && window.top !== window.parent) {
+								window.top.postMessage(msg, '*');
+							}
+						};
+						img.src = dataUrl;
+					} else {
+						var msg = {
+							type: 'CITY_MAP_EXPORT',
+							dataUrl: dataUrl,
+							filename: filename || 'City_Map',
+							format: blob.type || 'unknown'
+						};
+						if (window.parent && window.parent !== window) {
+							window.parent.postMessage(msg, '*');
+						}
+						if (window.top && window.top !== window && window.top !== window.parent) {
+							window.top.postMessage(msg, '*');
+						}
+					}
+				};
+				reader.readAsDataURL(blob);
+
+				if (window.__triggerFileDownload && origSaveAs) {
+					origSaveAs(blob, filename, disableAutoBOM);
+				}
+			}
+
+			try {
+				Object.defineProperty(window, 'saveAs', {
+					get: function() { return customSaveAs; },
+					set: function(fn) { origSaveAs = fn; },
+					configurable: true
+				});
+			} catch(e) {
+				window.saveAs = customSaveAs;
+			}
+
+			function dispatchKey(code, shift) {
+				var eDown = new KeyboardEvent('keydown', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				window.dispatchEvent(eDown);
+				setTimeout(function() {
+					var eUp = new KeyboardEvent('keyup', {
+						keyCode: code,
+						which: code,
+						shiftKey: !!shift,
+						bubbles: true,
+						cancelable: true
+					});
+					window.dispatchEvent(eUp);
+				}, 40);
+			}
+
+			window.addEventListener('message', function(event) {
+				if (!event.data || !event.data.action) return;
+				var action = event.data.action;
+
+				if (action === 'EXPORT_PNG') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (window.__mfcg_be && typeof window.__mfcg_be.asPNG === 'function') {
+						try {
+							window.__mfcg_be.asPNG();
+						} catch(err) {
+							console.error('asPNG error:', err);
+							dispatchKey(80);
+						}
+					} else {
+						dispatchKey(80);
+					}
+				} else if (action === 'EXPORT_SVG') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (window.__mfcg_be && typeof window.__mfcg_be.asSVG === 'function') {
+						window.__mfcg_be.asSVG();
+					}
+				} else if (action === 'EXPORT_JSON') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (window.__mfcg_be && typeof window.__mfcg_be.asJSON === 'function') {
+						window.__mfcg_be.asJSON();
+					}
+				} else if (action === 'GENERATE') {
+					dispatchKey(13); // Enter (new city)
+				} else if (action === 'SET_PRESET') {
+					var preset = event.data.preset;
+					if (preset === 'default') dispatchKey(49);
+					else if (preset === 'ink') dispatchKey(50);
+					else if (preset === 'bw') dispatchKey(51);
+					else if (preset === 'vivid') dispatchKey(52);
+					else if (preset === 'natural') dispatchKey(53);
+					else if (preset === 'modern') dispatchKey(54);
+				} else if (action === 'SET_SIZE') {
+					var size = event.data.size;
+					if (window.__mfcg_Fd && window.__mfcg_Ub && window.__mfcg_bb && window.__mfcg_Ec) {
+						var numSize = size === 'small' ? 15 : size === 'medium' ? 30 : size === 'large' ? 60 : (typeof size === 'number' ? size : 25);
+						new window.__mfcg_Ub(window.__mfcg_Fd.create(numSize, window.__mfcg_Ub.instance ? window.__mfcg_Ub.instance.bp.seed : 1));
+						window.__mfcg_bb.switchScene(window.__mfcg_Ec);
+					} else {
+						dispatchKey(13);
+					}
+				} else if (action === 'REROLL_NAME') {
+					if (window.__mfcg_Ub && window.__mfcg_Ub.instance) {
+						var inst = window.__mfcg_Ub.instance;
+						inst.setName(inst.rerollName());
+					}
+				} else if (action === 'REROLL_DISTRICTS') {
+					if (window.__mfcg_Ub && window.__mfcg_Ub.instance) {
+						window.__mfcg_Ub.instance.rerollDistricts();
+					}
+				} else if (action === 'TOGGLE_ALLEYS') {
+					dispatchKey(65); // A
+				} else if (action === 'TOGGLE_BUILDINGS') {
+					dispatchKey(66); // B
+				} else if (action === 'TOGGLE_GRID') {
+					dispatchKey(68); // D
+				} else if (action === 'TOGGLE_DISTRICTS') {
+					dispatchKey(76); // L
+				} else if (action === 'TOGGLE_THIN_LINES') {
+					dispatchKey(78); // N
+				} else if (action === 'OPEN_STYLE') {
+					dispatchKey(83); // S
+				} else if (action === 'OPEN_SETTLEMENT') {
+					dispatchKey(84); // T
+				} else if (action === 'OPEN_GENERATE') {
+					dispatchKey(71); // G
+				} else if (action === 'OPEN_WARP') {
+					dispatchKey(87); // W
+				}
+			});
+		})();
+
+		window.addEventListener ("touchmove", function (event) { event.preventDefault (); }, { capture: false, passive: false });
+		if (typeof window.devicePixelRatio != 'undefined' && window.devicePixelRatio > 2) {
+			var meta = document.getElementById ("viewport");
+			meta.setAttribute ('content', 'width=device-width, initial-scale=' + (2 / window.devicePixelRatio) + ', user-scalable=no');
+		}
+	</script>
+	
+	<style>
+		html,body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+		#openfl-content { background: #000000; width: 100%; height: 100%; }
+		@font-face {
+			font-family: 'IM FELL Great Primer Roman';
+			src: url('Assets/IMFellGreatPrimer-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/IMFellGreatPrimer-Regular.woff') format('woff'),
+			url('Assets/IMFellGreatPrimer-Regular.ttf') format('truetype'),
+			url('Assets/IMFellGreatPrimer-Regular.svg#IM%20FELL%20Great%20Primer%20Roman') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Regular';
+			src: url('Assets/ShareTech-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/ShareTech-Regular.woff') format('woff'),
+			url('Assets/ShareTech-Regular.ttf') format('truetype'),
+			url('Assets/ShareTech-Regular.svg#Share%20Tech%20Regular') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Mono';
+			src: url('Assets/ShareTechMono-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/ShareTechMono-Regular.woff') format('woff'),
+			url('Assets/ShareTechMono-Regular.ttf') format('truetype'),
+			url('Assets/ShareTechMono-Regular.svg#Share%20Tech%20Mono') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+	</style>
+</head>
+<body>
+	<noscript>This webpage makes extensive use of JavaScript. Please enable JavaScript in your web browser to view this page.</noscript>
+	<div id="openfl-content"></div>
+	<script type="text/javascript">
+		lime.embed ("mfcg", "openfl-content", 0, 0, { parameters: {} });
+	</script>
+</body>
+</html>

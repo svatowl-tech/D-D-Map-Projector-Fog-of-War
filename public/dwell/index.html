@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Dwellings Generator</title>
+	<meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<meta name="mobile-web-app-capable" content="yes">
+	
+	<link rel="shortcut icon" type="image/png" href="./favicon.png">
+	
+	<style>
+		html, body {
+			margin: 0;
+			padding: 0;
+			height: 100%;
+			overflow: hidden;
+			background: #0f141c;
+			color: #e2e8f0;
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			user-select: none;
+		}
+		#openfl-content {
+			background: #0f141c;
+			width: 100%;
+			height: 100%;
+		}
+		@font-face {
+			font-family: 'Share Tech Regular';
+			src: url('Assets/ShareTech-regular.woff') format('woff');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Mono';
+			src: url('Assets/ShareTechMono-regular.woff') format('woff');
+			font-weight: normal;
+			font-style: normal;
+		}
+	</style>
+
+	<script>
+		// PostMessage and Multi-Floor SaveAs Interception Bridge for Tabletop Import
+		(function() {
+			var origSaveAs = null;
+			window.__currentBatchContext = null;
+
+			function getFloorLabel(f, totalFloors) {
+				if (window.__dwellings_ub && window.__dwellings_ub.getFloorLabel) {
+					try {
+						return window.__dwellings_ub.getFloorLabel(f, totalFloors);
+					} catch(e) {}
+				}
+				if (f === -1) return 'B';
+				if (f === 0) return 'GF';
+				return f < totalFloors ? f + 'F' : 'R';
+			}
+
+			function getFloorRussianName(f, totalFloors) {
+				if (f === -1) return 'Цоколь / Подвал';
+				if (f === 0) return '1-й этаж';
+				if (f === totalFloors) return 'Крыша / Чердак';
+				return (f + 1) + '-й этаж';
+			}
+
+			function customSaveAs(blob, filename, disableAutoBOM) {
+				var reader = new FileReader();
+				var batchCtx = window.__currentBatchContext;
+
+				reader.onload = function(e) {
+					var dataUrl = e.target.result;
+					var mimeType = blob.type || 'image/png';
+					var isSVG = filename && filename.endsWith('.svg');
+					var isJSON = filename && filename.endsWith('.json');
+					var isPNG = filename && filename.endsWith('.png');
+
+					var houseName = '';
+					var currentFloor = 0;
+					var totalFloors = 1;
+					if (window.__dwellings_scene && window.__dwellings_scene.house) {
+						houseName = window.__dwellings_scene.house.name || 'Дом';
+						totalFloors = (window.__dwellings_scene.house.floors && window.__dwellings_scene.house.floors.length) || 1;
+					}
+					if (window.__dwellings_vd && typeof window.__dwellings_vd.curFloor === 'number') {
+						currentFloor = window.__dwellings_vd.curFloor;
+					}
+
+					var floorLabel = batchCtx ? batchCtx.floorLabel : getFloorLabel(currentFloor, totalFloors);
+					var floorTitle = batchCtx ? batchCtx.floorTitle : (houseName ? ('Дом: ' + houseName + ' - ' + getFloorRussianName(currentFloor, totalFloors) + ' (' + floorLabel + ')') : filename);
+
+					var messagePayload = {
+						type: 'DWELLINGS_MAP_EXPORT',
+						generatorType: 'dwellings',
+						format: isSVG ? 'svg' : (isJSON ? 'json' : 'png'),
+						filename: filename || 'dwelling_map.png',
+						dataUrl: dataUrl,
+						mimeType: mimeType,
+						houseName: houseName,
+						floorIndex: batchCtx ? batchCtx.floorIndex : currentFloor,
+						floorLabel: floorLabel,
+						floorTitle: floorTitle,
+						isBatch: batchCtx ? !!batchCtx.isBatch : false,
+						batchIndex: batchCtx ? batchCtx.batchIndex : 0,
+						batchTotal: batchCtx ? batchCtx.batchTotal : 1,
+						isMultiSheet: batchCtx ? !!batchCtx.isMultiSheet : false,
+						timestamp: Date.now()
+					};
+
+					// Send to parent window (Tabletop host application)
+					try {
+						window.parent.postMessage(messagePayload, '*');
+					} catch(err) {
+						console.error('Failed to postMessage to parent:', err);
+					}
+
+					// Also dispatch custom event for iframe-local listeners
+					window.dispatchEvent(new CustomEvent('dwellings-map-exported', { detail: messagePayload }));
+				};
+
+				if (blob.type && blob.type.indexOf('json') !== -1) {
+					reader.readAsText(blob);
+				} else {
+					reader.readAsDataURL(blob);
+				}
+
+				// If the user requested an actual browser file download directly
+				if (window.__triggerFileDownload && origSaveAs) {
+					origSaveAs(blob, filename, disableAutoBOM);
+				}
+			}
+
+			try {
+				Object.defineProperty(window, 'saveAs', {
+					get: function() { return customSaveAs; },
+					set: function(fn) { origSaveAs = fn; },
+					configurable: true
+				});
+			} catch(e) {
+				window.saveAs = customSaveAs;
+			}
+
+			function dispatchKey(code, shift) {
+				var eDown = new KeyboardEvent('keydown', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				var eUp = new KeyboardEvent('keyup', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				window.dispatchEvent(eDown);
+				document.dispatchEvent(eDown);
+				setTimeout(function() {
+					window.dispatchEvent(eUp);
+					document.dispatchEvent(eUp);
+				}, 50);
+			}
+
+			function getHouseInfo() {
+				var s = window.__dwellings_scene;
+				if (!s || !s.house) return null;
+				var h = s.house;
+				var totalFloors = (h.floors && h.floors.length) || 1;
+				var floors = [];
+
+				if (h.basement) {
+					floors.push({
+						index: -1,
+						label: 'B',
+						name: 'Подвал (Basement)',
+						isBasement: true
+					});
+				}
+
+				for (var i = 0; i < totalFloors; i++) {
+					var lbl = i === 0 ? 'GF' : i + 'F';
+					var rName = i === 0 ? '1-й этаж (Ground Floor)' : (i + 1) + '-й этаж (' + i + 'F)';
+					floors.push({
+						index: i,
+						label: lbl,
+						name: rName,
+						isBasement: false
+					});
+				}
+
+				var curFloor = (window.__dwellings_vd && typeof window.__dwellings_vd.curFloor === 'number')
+					? window.__dwellings_vd.curFloor
+					: 0;
+
+				return {
+					name: h.name || 'Особняк',
+					hasBasement: !!h.basement,
+					numFloors: totalFloors,
+					floors: floors,
+					currentFloor: curFloor
+				};
+			}
+
+			function sendHouseInfo() {
+				var info = getHouseInfo();
+				if (info) {
+					try {
+						window.parent.postMessage({
+							type: 'DWELLINGS_INFO_RESPONSE',
+							generatorType: 'dwellings',
+							info: info,
+							timestamp: Date.now()
+						}, '*');
+					} catch(e) {}
+				}
+			}
+
+			// Broadcast info on scene reset / update
+			setInterval(function() {
+				if (window.__dwellings_scene && window.__dwellings_scene.house) {
+					var hName = window.__dwellings_scene.house.name;
+					var curF = window.__dwellings_vd ? window.__dwellings_vd.curFloor : 0;
+					if (window.__lastReportedHouse !== hName || window.__lastReportedFloor !== curF) {
+						window.__lastReportedHouse = hName;
+						window.__lastReportedFloor = curF;
+						sendHouseInfo();
+					}
+				}
+			}, 500);
+
+			// Batch export runner for multiple floors
+			function runBatchFloorExport(floorIndices) {
+				var scene = window.__dwellings_scene;
+				var ub = window.__dwellings_ub;
+				if (!scene || !scene.house || !ub || !scene.map) {
+					console.warn('Dwellings scene or export module not ready for batch export');
+					return;
+				}
+
+				var house = scene.house;
+				var totalFloors = (house.floors && house.floors.length) || 1;
+				var list = Array.isArray(floorIndices) && floorIndices.length > 0
+					? floorIndices
+					: (function() {
+						var arr = [];
+						if (house.basement) arr.push(-1);
+						for (var i = 0; i < totalFloors; i++) arr.push(i);
+						return arr;
+					})();
+
+				try {
+					window.parent.postMessage({
+						type: 'DWELLINGS_BATCH_START',
+						generatorType: 'dwellings',
+						total: list.length,
+						houseName: house.name || 'Дом',
+						timestamp: Date.now()
+					}, '*');
+				} catch(e) {}
+
+				var idx = 0;
+				var originalFloor = window.__dwellings_vd ? window.__dwellings_vd.curFloor : 0;
+
+				function exportNext() {
+					if (idx >= list.length) {
+						window.__currentBatchContext = null;
+						// Restore original floor view
+						if (scene.setFloor) {
+							scene.setFloor(originalFloor);
+						}
+						try {
+							window.parent.postMessage({
+								type: 'DWELLINGS_BATCH_COMPLETE',
+								generatorType: 'dwellings',
+								total: list.length,
+								houseName: house.name || 'Дом',
+								timestamp: Date.now()
+							}, '*');
+						} catch(e) {}
+						return;
+					}
+
+					var f = list[idx];
+					var floorLbl = getFloorLabel(f, totalFloors);
+					var floorRus = getFloorRussianName(f, totalFloors);
+
+					window.__currentBatchContext = {
+						isBatch: true,
+						batchIndex: idx,
+						batchTotal: list.length,
+						floorIndex: f,
+						floorLabel: floorLbl,
+						floorTitle: 'Дом: ' + (house.name || 'Особняк') + ' - ' + floorRus + ' (' + floorLbl + ')',
+						houseName: house.name
+					};
+
+					if (scene.setFloor) {
+						scene.setFloor(f);
+					}
+
+					setTimeout(function() {
+						try {
+							ub.planAsPNG(house, scene.map, f);
+							if (scene.map && scene.map.updateLabels) {
+								scene.map.updateLabels(house);
+							}
+						} catch(err) {
+							console.error('Error exporting floor ' + f, err);
+						}
+
+						idx++;
+						setTimeout(exportNext, 250);
+					}, 100);
+				}
+
+				exportNext();
+			}
+
+			// Parent -> Generator Command Listener
+			window.addEventListener('message', function(event) {
+				if (!event.data || typeof event.data !== 'object') return;
+				var data = event.data;
+
+				switch(data.type) {
+					case 'DWELLINGS_GET_INFO':
+						sendHouseInfo();
+						break;
+
+					case 'DWELLINGS_NEW_HOUSE':
+					case 'DWELLINGS_REROLL':
+						if (window.__dwellings_scene && window.__dwellings_scene.reset) {
+							window.__dwellings_scene.reset();
+							setTimeout(sendHouseInfo, 100);
+						} else {
+							dispatchKey(13); // Enter key
+							setTimeout(sendHouseInfo, 100);
+						}
+						break;
+
+					case 'DWELLINGS_EXPORT_PNG':
+					case 'DWELLINGS_TRIGGER_IMPORT':
+						window.__currentBatchContext = null;
+						try {
+							var scene = window.__dwellings_scene;
+							var ub = window.__dwellings_ub;
+							if (scene && (!scene.map || (window.Pa && !window.Pa.planView))) {
+								if (scene.switchView) scene.switchView();
+							}
+							setTimeout(function() {
+								try {
+									if (ub && scene && scene.house && scene.map) {
+										var curF = (window.__dwellings_vd && typeof window.__dwellings_vd.curFloor === 'number') ? window.__dwellings_vd.curFloor : 0;
+										ub.planAsPNG(scene.house, scene.map, curF);
+										if (scene.map.updateLabels) scene.map.updateLabels(scene.house);
+									} else if (scene && scene.exportAsPNG) {
+										scene.exportAsPNG();
+									}
+								} catch (innerErr) {
+									console.error('House PNG export error:', innerErr);
+									try {
+										window.parent.postMessage({ type: 'DWELLINGS_EXPORT_ERROR', error: String(innerErr) }, '*');
+									} catch(e) {}
+								}
+							}, 80);
+						} catch (err) {
+							console.error('Failed to trigger house export:', err);
+						}
+						break;
+
+					case 'DWELLINGS_EXPORT_SVG':
+						window.__currentBatchContext = null;
+						if (window.__dwellings_scene && window.__dwellings_scene.exportAsSVG) {
+							window.__dwellings_scene.exportAsSVG();
+						}
+						break;
+
+					case 'DWELLINGS_EXPORT_JSON':
+						if (window.__dwellings_Db && window.__dwellings_scene && window.__dwellings_scene.house) {
+							window.__dwellings_Db.export(window.__dwellings_scene.house);
+						}
+						break;
+
+					case 'DWELLINGS_EXPORT_ALL_FLOORS_SEPARATE':
+						runBatchFloorExport(data.floors || null);
+						break;
+
+					case 'DWELLINGS_EXPORT_MULTI_FLOOR_SHEET':
+						if (window.__dwellings_scene && window.__dwellings_scene.house && window.__dwellings_ub) {
+							var house = window.__dwellings_scene.house;
+							var totalF = (house.floors && house.floors.length) || 1;
+							var minF = house.basement ? -1 : 0;
+							var maxF = totalF - 1;
+							var fromF = typeof data.fromFloor === 'number' ? data.fromFloor : minF;
+							var toF = typeof data.toFloor === 'number' ? data.toFloor : maxF;
+							var cols = data.cols || Math.min(3, Math.max(1, toF - fromF + 1));
+							var dpc = data.dpc || 200;
+
+							window.__currentBatchContext = {
+								isBatch: false,
+								isMultiSheet: true,
+								floorLabel: 'All Floors',
+								floorTitle: 'Дом: ' + (house.name || 'Особняк') + ' (Все этажи)',
+								houseName: house.name
+							};
+
+							window.__dwellings_ub.multiFloor(house, fromF, toF, cols, dpc, true);
+						}
+						break;
+
+					case 'DWELLINGS_SET_FLOOR':
+						if (typeof data.floorIndex === 'number' && window.__dwellings_scene && window.__dwellings_scene.setFloor) {
+							window.__dwellings_scene.setFloor(data.floorIndex);
+							setTimeout(sendHouseInfo, 50);
+						}
+						break;
+
+					case 'DWELLINGS_SET_PALETTE':
+						if (data.palette && window.__dwellings_scene && window.__dwellings_scene.applyColorsPreset) {
+							window.__dwellings_scene.applyColorsPreset(data.palette);
+						} else {
+							var palMap = { 'natural': 49, 'wooden': 50, 'plain': 51, 'blueprint': 52, 'bw': 53 };
+							if (palMap[data.palette]) dispatchKey(palMap[data.palette]);
+						}
+						break;
+
+					case 'DWELLINGS_SET_STYLE':
+						if (data.style && window.__dwellings_sb) {
+							window.__dwellings_sb.setStyle(data.style);
+							if (window.__dwellings_scene && window.__dwellings_scene.updateView) {
+								window.__dwellings_scene.updateView();
+							}
+						}
+						break;
+
+					case 'DWELLINGS_SWITCH_VIEW':
+						if (window.__dwellings_scene && window.__dwellings_scene.switchView) {
+							window.__dwellings_scene.switchView();
+						} else {
+							dispatchKey(69); // 'E'
+						}
+						break;
+
+					case 'DWELLINGS_SHOW_PARAMS':
+						if (window.__dwellings_scene && window.__dwellings_scene.showParams) {
+							window.__dwellings_scene.showParams();
+						} else {
+							dispatchKey(84); // 'T' / Tab
+						}
+						break;
+
+					case 'DWELLINGS_CHANGE_FLOOR':
+						if (data.direction === 'up') {
+							dispatchKey(33); // Page Up
+						} else if (data.direction === 'down') {
+							dispatchKey(34); // Page Down
+						}
+						setTimeout(sendHouseInfo, 50);
+						break;
+				}
+			});
+		})();
+
+		window.addEventListener("touchmove", function (event) { event.preventDefault(); }, { capture: false, passive: false });
+		if (typeof window.devicePixelRatio != 'undefined' && window.devicePixelRatio > 2) {
+			var meta = document.getElementById("viewport");
+			if (meta) {
+				meta.setAttribute('content', 'width=device-width, initial-scale=' + (2 / window.devicePixelRatio) + ', user-scalable=no');
+			}
+		}
+	</script>
+	<script type="text/javascript" src="./Dwellings.js"></script>
+</head>
+<body>
+	<noscript>This application requires JavaScript to run properly.</noscript>
+	<div id="openfl-content"></div>
+	
+	<script type="text/javascript">
+		lime.embed("Dwellings", "openfl-content", 0, 0, { parameters: {} });
+	</script>
+</body>
+</html>

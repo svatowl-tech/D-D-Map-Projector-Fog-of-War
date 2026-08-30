@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Medieval Village Generator</title>
+	
+	<meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	
+	<link rel="shortcut icon" type="image/png" href="./favicon.png">
+	<script type="text/javascript" src="./Village.js"></script>
+	
+	<script>
+		// PostMessage and SaveAs Interception Bridge for Tabletop Import
+		(function() {
+			var origSaveAs = null;
+			function customSaveAs(blob, filename, disableAutoBOM) {
+				var reader = new FileReader();
+				reader.onload = function(e) {
+					var dataUrl = e.target.result;
+					if (blob.type && blob.type.indexOf('image/png') !== -1) {
+						var img = new Image();
+						img.onload = function() {
+							var msg = {
+								type: 'VILLAGE_MAP_EXPORT',
+								dataUrl: dataUrl,
+								filename: filename || 'Village_Map',
+								width: img.naturalWidth || 2048,
+								height: img.naturalHeight || 2048,
+								format: 'png'
+							};
+							if (window.parent && window.parent !== window) {
+								window.parent.postMessage(msg, '*');
+							}
+							if (window.top && window.top !== window && window.top !== window.parent) {
+								window.top.postMessage(msg, '*');
+							}
+						};
+						img.src = dataUrl;
+					} else {
+						var msg = {
+							type: 'VILLAGE_MAP_EXPORT',
+							dataUrl: dataUrl,
+							filename: filename || 'Village_Map',
+							format: blob.type || 'unknown'
+						};
+						if (window.parent && window.parent !== window) {
+							window.parent.postMessage(msg, '*');
+						}
+						if (window.top && window.top !== window && window.top !== window.parent) {
+							window.top.postMessage(msg, '*');
+						}
+					}
+				};
+				reader.readAsDataURL(blob);
+
+				if (window.__triggerFileDownload && origSaveAs) {
+					origSaveAs(blob, filename, disableAutoBOM);
+				}
+			}
+
+			try {
+				Object.defineProperty(window, 'saveAs', {
+					get: function() { return customSaveAs; },
+					set: function(fn) { origSaveAs = fn; },
+					configurable: true
+				});
+			} catch(e) {
+				window.saveAs = customSaveAs;
+			}
+
+			function dispatchKey(code, shift) {
+				var eDown = new KeyboardEvent('keydown', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				window.dispatchEvent(eDown);
+				setTimeout(function() {
+					var eUp = new KeyboardEvent('keyup', {
+						keyCode: code,
+						which: code,
+						shiftKey: !!shift,
+						bubbles: true,
+						cancelable: true
+					});
+					window.dispatchEvent(eUp);
+				}, 40);
+			}
+
+			window.addEventListener('message', function(event) {
+				if (!event.data || !event.data.action) return;
+				var action = event.data.action;
+
+				if (action === 'EXPORT_PNG') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (window.__village_scene && window.__village_scene.view && typeof window.__village_scene.view.exportPNG === 'function') {
+						try {
+							window.__village_scene.view.exportPNG();
+						} catch(e) {
+							console.error('Village exportPNG error:', e);
+							dispatchKey(80);
+						}
+					} else {
+						dispatchKey(80);
+					}
+				} else if (action === 'EXPORT_SVG') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (window.__village_scene && window.__village_scene.view && typeof window.__village_scene.view.exportSVG === 'function') {
+						window.__village_scene.view.exportSVG();
+					}
+				} else if (action === 'EXPORT_JSON') {
+					window.__triggerFileDownload = !!event.data.download;
+					if (typeof window.__village_exportJSON === 'function') {
+						window.__village_exportJSON();
+					}
+				} else if (action === 'GENERATE' || action === 'NEW_VILLAGE') {
+					if (window.__village_scene && typeof window.__village_scene.newVillage === 'function') {
+						window.__village_scene.newVillage();
+					} else {
+						dispatchKey(13); // Enter
+					}
+				} else if (action === 'REROLL_VILLAGE') {
+					if (window.__village_scene && typeof window.__village_scene.rerollVillage === 'function') {
+						window.__village_scene.rerollVillage();
+					} else {
+						dispatchKey(13, true); // Shift + Enter
+					}
+				} else if (action === 'RENAME') {
+					if (window.__village_scene && typeof window.__village_scene.rename === 'function') {
+						window.__village_scene.rename();
+					}
+				} else if (action === 'SET_PRESET') {
+					var preset = event.data.preset;
+					if (window.__village_scene && typeof window.__village_scene.loadPresetStyle === 'function') {
+						if (preset === 'random') {
+							window.__village_scene.loadRandomStyle();
+						} else {
+							window.__village_scene.loadPresetStyle(preset);
+						}
+					} else {
+						if (preset === 'default') dispatchKey(49);
+						else if (preset === 'sand') dispatchKey(50);
+						else if (preset === 'cold') dispatchKey(51);
+						else if (preset === 'night') dispatchKey(52);
+						else if (preset === 'bw') dispatchKey(53);
+						else if (preset === 'random') dispatchKey(48);
+					}
+				} else if (action === 'TOGGLE_FIELDS') {
+					if (window.__village_scene && typeof window.__village_scene.toggleFields === 'function') {
+						window.__village_scene.toggleFields();
+					}
+				} else if (action === 'TOGGLE_SHADING') {
+					if (window.__village_scene && typeof window.__village_scene.toggleShading === 'function') {
+						window.__village_scene.toggleShading();
+					}
+				} else if (action === 'TOGGLE_ORCHARDS') {
+					if (window.__village_scene && typeof window.__village_scene.toggleOrchards === 'function') {
+						window.__village_scene.toggleOrchards();
+					}
+				} else if (action === 'TOGGLE_SHADOWS') {
+					if (window.__village_scene && typeof window.__village_scene.toggleShadows === 'function') {
+						window.__village_scene.toggleShadows();
+					}
+				} else if (action === 'TOGGLE_BUILDINGS') {
+					if (window.__village_scene && typeof window.__village_scene.toggleWilderness === 'function') {
+						window.__village_scene.toggleWilderness();
+					}
+				} else if (action === 'TOGGLE_ROADS') {
+					if (window.__village_scene && typeof window.__village_scene.toggleRoads === 'function') {
+						window.__village_scene.toggleRoads();
+					}
+				} else if (action === 'TOGGLE_TITLE') {
+					if (window.__village_scene && typeof window.__village_scene.toggleTitle === 'function') {
+						window.__village_scene.toggleTitle();
+					}
+				} else if (action === 'REROLL_TREES') {
+					if (window.__village_scene && typeof window.__village_scene.rerollTrees === 'function') {
+						window.__village_scene.rerollTrees();
+					}
+				} else if (action === 'OPEN_STYLE') {
+					if (window.__village_scene && typeof window.__village_scene.editStyle === 'function') {
+						window.__village_scene.editStyle();
+					} else {
+						dispatchKey(83); // S
+					}
+				} else if (action === 'OPEN_PARAMETERS' || action === 'CONFIGURE') {
+					if (window.__village_scene && typeof window.__village_scene.configure === 'function') {
+						window.__village_scene.configure();
+					} else {
+						dispatchKey(9); // Tab
+					}
+				}
+			});
+		})();
+
+		window.addEventListener ("touchmove", function (event) { event.preventDefault (); }, { capture: false, passive: false });
+		if (typeof window.devicePixelRatio != 'undefined' && window.devicePixelRatio > 2) {
+			var meta = document.getElementById ("viewport");
+			meta.setAttribute ('content', 'width=device-width, initial-scale=' + (2 / window.devicePixelRatio) + ', user-scalable=no');
+		}
+	</script>
+	
+	<style>
+		html,body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+		#openfl-content { background: #000000; width: 100%; height: 100%; }
+		@font-face {
+			font-family: 'Cinzel Bold';
+			src: url('Assets/Cinzel-Bold.woff') format('woff');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Regular';
+			src: url('Assets/ShareTech-Regular.woff') format('woff');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Mono';
+			src: url('Assets/ShareTechMono-Regular.woff') format('woff');
+			font-weight: normal;
+			font-style: normal;
+		}
+	</style>
+</head>
+<body>
+	<noscript>This webpage makes extensive use of JavaScript. Please enable JavaScript in your web browser to view this page.</noscript>
+	
+	<div id="openfl-content"></div>
+	
+	<script type="text/javascript">
+		lime.embed ("Village", "openfl-content", 0, 0, { parameters: {} });
+	</script>
+</body>
+</html>

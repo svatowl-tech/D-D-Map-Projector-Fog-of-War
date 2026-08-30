@@ -1,0 +1,35 @@
+{
+  "thicket": "#FFFFFF",
+  "ground": "#FFFFFF",
+  "ink": "#000000",
+  "marks": "#000000",
+  "tree": [
+    "#EEEEEE",
+    "#DDDDDD"
+  ],
+  "treeDetails": "#000000",
+  "treeVariance": "0.0",
+  "treeBands": "2",
+  "treeShape": "Conifer",
+  "water": "#F4F4F4",
+  "shallow": "#FFFFFF",
+  "sand": "#CCCCCC",
+  "shadowColor": "#DDDDDD",
+  "shadowLength": "1.0",
+  "shadowAngle": "60",
+  "road": "#EAEAEA",
+  "roadOutline": "#000000",
+  "roadWidth": "0.5",
+  "roadWiggle": "0.5",
+  "clutter": [
+    "#EEEEEE"
+  ],
+  "clutterMin": "0.5",
+  "clutterMax": "2.0",
+  "clutterDensity": "0.8",
+  "clutterFill": "0.4",
+  "strokeNormal": "1.2",
+  "strokeThin": "0.6",
+  "strokeGrid": "0.3",
+  "grassLength": "8"
+}

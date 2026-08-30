@@ -1,0 +1,19 @@
+{
+  rooms: {
+    great_hall: { name: "Great Hall", minSize: 8, groundFloor: true, entrance: true },
+    crypt: { name: "Ancestral Crypt", minSize: 5, basement: true },
+    chapel: { name: "Private Chapel", minSize: 4, groundFloor: true },
+    armoury: { name: "Armoury", minSize: 4 },
+    library: { name: "Occult Library", minSize: 5, aboveGround: true },
+    observatory: { name: "Tower Observatory", minSize: 4, topFloor: true },
+    laboratory: { name: "Alchemical Lab", minSize: 4, aboveGround: true },
+    master_chamber: { name: "Lord's Chamber", minSize: 6, aboveGround: true },
+    gallery: { name: "Portrait Gallery", minSize: 4 },
+    servants_quarters: { name: "Servants' Quarters", maxSize: 4 },
+    dungeon_cell: { name: "Dungeon Cell", basement: true, maxSize: 3 },
+    ossuary: { name: "Ossuary", basement: true, maxSize: 4 },
+    trophy_room: { name: "Trophy Chamber", minSize: 4 }
+  },
+  primary: ["great_hall", "crypt", "chapel", "library", "observatory", "master_chamber"],
+  generic: ["gallery", "servants_quarters", "dungeon_cell"]
+}

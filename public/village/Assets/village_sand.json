@@ -1,0 +1,65 @@
+{
+  "ground": [
+    "#d8caa8",
+    "#c2b391",
+    "#e4d8b8"
+  ],
+  "relief": "Hachures",
+  "sand": "#d4b37f",
+  "plank": "#b38f59",
+  "roofLight": [
+    "#c97d52",
+    "#ba6e45",
+    "#d68f63"
+  ],
+  "roofStroke": "#382a1c",
+  "roofVariance": "0.2",
+  "roofSlope": "0.5",
+  "roofType": "Flat",
+  "road": "#caa774",
+  "largeRoad": "6",
+  "smallRoad": "2",
+  "outlineRoads": "Hard",
+  "mergeRoads": "true",
+  "fieldLight": [
+    "#c8b88d",
+    "#b7a67b",
+    "#d8c99e"
+  ],
+  "fieldFurrow": "#423120",
+  "fieldVariance": "0.2",
+  "outlineFields": "Soft",
+  "waterShallow": "#4fa3a5",
+  "waterDeep": "#3b8688",
+  "shallowBands": "2",
+  "waterTide": "#9fe1e3",
+  "tree": [
+    "#6e7f4c",
+    "#5d6d3e"
+  ],
+  "thicket": "#4d5c31",
+  "treeDetails": "#2d381c",
+  "treeVariance": "0.2",
+  "treeShape": "Cotton",
+  "shadowColor": "#a89d84",
+  "shadowLength": "1.2",
+  "shadowAngle": "45",
+  "lights": "#000000",
+  "fontHeader": {
+    "embedded": "def_font",
+    "size": 16,
+    "bold": true
+  },
+  "fontPopulation": {
+    "embedded": "ui_font",
+    "size": 12
+  },
+  "fontNumber": {
+    "embedded": "ui_font_mono",
+    "size": 10
+  },
+  "ink": "#2d2215",
+  "paper": "#faf4e8",
+  "strokeNormal": "1",
+  "strokeThin": "0.5"
+}

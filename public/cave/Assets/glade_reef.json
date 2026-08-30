@@ -1,0 +1,37 @@
+{
+  "thicket": "#0A2838",
+  "ground": "#1A5060",
+  "ink": "#021018",
+  "marks": "#021018",
+  "tree": [
+    "#00B4D8",
+    "#0077B6",
+    "#90E0EF"
+  ],
+  "treeDetails": "#021018",
+  "treeVariance": "0.3",
+  "treeBands": "3",
+  "treeShape": "Shroom",
+  "water": "#03045E",
+  "shallow": "#0077B6",
+  "sand": "#ADE8F4",
+  "shadowColor": "#082030",
+  "shadowLength": "1.0",
+  "shadowAngle": "60",
+  "road": "#48CAE4",
+  "roadOutline": "#021018",
+  "roadWidth": "0.6",
+  "roadWiggle": "0.7",
+  "clutter": [
+    "#00B4D8",
+    "#90E0EF"
+  ],
+  "clutterMin": "0.6",
+  "clutterMax": "2.5",
+  "clutterDensity": "1.2",
+  "clutterFill": "0.7",
+  "strokeNormal": "1.0",
+  "strokeThin": "0.5",
+  "strokeGrid": "0.3",
+  "grassLength": "9"
+}

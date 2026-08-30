@@ -1,0 +1,35 @@
+{
+  "thicket": "#1E3231",
+  "ground": "#9CB285",
+  "ink": "#010206",
+  "marks": "#010206",
+  "tree": [
+    "#5F7F6A",
+    "#466350"
+  ],
+  "treeDetails": "#010206",
+  "treeVariance": "0.2",
+  "treeBands": "3",
+  "treeShape": "Conifer",
+  "water": "#4488CC",
+  "shallow": "#66AAEE",
+  "sand": "#D2B48C",
+  "shadowColor": "#96998E",
+  "shadowLength": "1.0",
+  "shadowAngle": "60",
+  "road": "#CCA383",
+  "roadOutline": "#010206",
+  "roadWidth": "0.5",
+  "roadWiggle": "0.5",
+  "clutter": [
+    "#5F7F6A"
+  ],
+  "clutterMin": "0.5",
+  "clutterMax": "2.0",
+  "clutterDensity": "1.0",
+  "clutterFill": "0.5",
+  "strokeNormal": "1.0",
+  "strokeThin": "0.5",
+  "strokeGrid": "0.3",
+  "grassLength": "8"
+}

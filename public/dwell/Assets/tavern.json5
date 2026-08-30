@@ -1,0 +1,16 @@
+{
+  rooms: {
+    common_room: { name: "Common Room", minSize: 8, groundFloor: true, entrance: true },
+    bar: { name: "Bar & Taproom", minSize: 4, groundFloor: true },
+    kitchen: { name: "Kitchen", minSize: 4, groundFloor: true },
+    cellar: { name: "Cellar & Brewery", minSize: 5, basement: true },
+    guest_room: { name: "Guest Room", minSize: 3, aboveGround: true },
+    suite: { name: "Master Suite", minSize: 5, aboveGround: true },
+    innkeeper: { name: "Innkeeper's Quarters", minSize: 4, aboveGround: true },
+    pantry: { name: "Pantry", maxSize: 3 },
+    stable_office: { name: "Store & Office", minSize: 3 },
+    attic_storage: { name: "Attic Storage", topFloor: true, maxSize: 4 }
+  },
+  primary: ["common_room", "bar", "kitchen", "cellar", "guest_room", "innkeeper"],
+  generic: ["guest_room", "pantry", "attic_storage"]
+}
