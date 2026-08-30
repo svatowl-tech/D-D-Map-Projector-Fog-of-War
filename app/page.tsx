@@ -14,7 +14,7 @@ import { ExternalLink, AlertTriangle, Monitor, Shield, X } from 'lucide-react';
 
 function AppContent() {
   const searchParams = useSearchParams();
-  const isPlayer = searchParams.get('mode') === 'player';
+  const isPlayer = searchParams?.get('mode') === 'player';
   const [overrideMode, setOverrideMode] = useState<'dm' | 'player' | null>(null);
   const [popupBlockedModal, setPopupBlockedModal] = useState<boolean>(false);
 
