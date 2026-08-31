@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getGeminiClient, saveJsonToDisk } from '@/lib/aiEngineHelper';
+import { callPolzaChatCompletions, saveJsonToDisk } from '@/lib/aiEngineHelper';
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,9 +12,8 @@ export async function POST(req: NextRequest) {
       partyLevel = '1-3',
       villainHook = 'Древний граф-вампир',
       customWishes = 'Много тайн, секретные ходы в замке, интриги фракций',
+      model = 'deepseek/deepseek-chat',
     } = body;
-
-    const ai = getGeminiClient();
 
     const campaignPrompt = `
 Ты — главный архитектор кампаний D&D 5e ("Lazy DM" метод). Сгенерируй полноценный автономный архив кампании по параметрам:
@@ -138,12 +137,19 @@ export async function POST(req: NextRequest) {
 }
 `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: campaignPrompt,
+    const polzaResponse = await callPolzaChatCompletions({
+      model: model || 'deepseek/deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'Ты — главный архитектор сюжетов D&D 5e на Polza AI. Твой ответ должен быть СТРОГО валидным JSON без вступительного текста.',
+        },
+        { role: 'user', content: campaignPrompt },
+      ],
+      temperature: 0.7,
     });
 
-    let jsonString = (response.text || '')
+    let jsonString = (polzaResponse.text || '')
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/```$/i, '')
@@ -152,8 +158,18 @@ export async function POST(req: NextRequest) {
     let campaign: any = {};
     try {
       campaign = JSON.parse(jsonString);
-    } catch (e) {
-      campaign = { rawText: jsonString, name: title };
+    } catch {
+      const firstBrace = jsonString.indexOf('{');
+      const lastBrace = jsonString.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        try {
+          campaign = JSON.parse(jsonString.substring(firstBrace, lastBrace + 1));
+        } catch {
+          campaign = { rawText: jsonString, name: title };
+        }
+      } else {
+        campaign = { rawText: jsonString, name: title };
+      }
     }
 
     const campaignFileName = `campaign-ai-${Date.now()}.json`;
@@ -166,7 +182,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     return NextResponse.json(
-      { success: false, error: error.message || 'Ошибка генерации кампании' },
+      { success: false, error: error.message || 'Ошибка генерации кампании через Polza AI' },
       { status: 500 }
     );
   }

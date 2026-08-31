@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>D&D Tactical Map Projector - Offline Edition</title>
+  <style>
+    :root {
+      --bg: #0d0d0e;
+      --surface: #161618;
+      --accent: #ff4e00;
+      --accent-hover: #ff6a2b;
+      --ink: #e2e2e7;
+      --ink-muted: #888891;
+      --ink-faint: #26262a;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      font-size: 11px;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      height: 44px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--ink-faint);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      z-index: 30;
+      flex-shrink: 0;
+    }
+    .header-left, .header-right {
+      display: flex;
+      align-items: center;
+    }
+    .header-left > *, .header-right > * {
+      margin-right: 8px;
+    }
+    .header-left > *:last-child, .header-right > *:last-child {
+      margin-right: 0;
+    }
+    .logo {
+      font-weight: 900;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .btn {
+      height: 28px;
+      padding: 0 10px;
+      background: var(--surface);
+      color: var(--ink);
+      border: 1px solid var(--ink-faint);
+      border-radius: 0;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .btn:hover {
+      background: #202024;
+      border-color: #3f3f46;
+    }
+    .btn-accent {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+    }
+    .btn-accent:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+    main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+    aside {
+      width: 280px;
+      background: var(--bg);
+      border-right: 1px solid var(--ink-faint);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      flex-shrink: 0;
+      z-index: 20;
+    }
+    .section-card {
+      padding: 12px;
+      border-bottom: 1px solid var(--ink-faint);
+    }
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-size: 9px;
+      letter-spacing: 0.5px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-gap: 6px;
+    }
+    .range-group {
+      margin-top: 8px;
+    }
+    .range-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      color: var(--ink-muted);
+      font-size: 9px;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      background: var(--surface);
+      accent-color: var(--accent);
+    }
+    #viewport {
+      flex: 1;
+      position: relative;
+      background: #050505;
+      cursor: crosshair;
+      overflow: hidden;
+    }
+    #map-transform-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+      -webkit-transform: translate3d(0, 0, 0);
+      transform: translate3d(0, 0, 0);
+    }
+    #map-img {
+      display: block;
+      pointer-events: none;
+      max-width: none;
+    }
+    #fog-canvas, #grid-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+    .map-status-overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(13, 13, 14, 0.85);
+      border: 1px solid var(--ink-faint);
+      padding: 4px 8px;
+      font-size: 9px;
+      pointer-events: none;
+      z-index: 25;
+    }
+    .map-controls-floating {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      z-index: 25;
+    }
+    .map-controls-floating .btn {
+      margin-bottom: 4px;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <span class="logo">D&D C2D Projector (Offline)</span>
+      <span id="sync-status" style="font-size: 9px; color: var(--ink-muted);">
+        <span class="status-dot" style="background: #10b981;"></span>Sync: Ready
+      </span>
+    </div>
+    <div class="header-right">
+      <button class="btn" id="btn-open-player">Окно игроков</button>
+      <button class="btn btn-accent" id="btn-upload">Загрузить карту</button>
+      <input type="file" id="file-input" accept="image/*,video/*" style="display:none;">
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="section-card">
+        <div class="section-title">
+          <span>[01] Туман Войны</span>
+          <span id="brush-mode-label">ОТКРЫТЬ</span>
+        </div>
+        <div class="grid-2">
+          <button class="btn btn-accent" id="btn-mode-reveal">Открыть (R)</button>
+          <button class="btn" id="btn-mode-hide">Скрыть (H)</button>
+          <button class="btn" id="btn-mode-pan">Рука (P)</button>
+          <button class="btn" id="btn-mode-measure">Линейка (M)</button>
+        </div>
+
+        <div class="range-group">
+          <div class="range-label">
+            <span>Размер кисти</span>
+            <span id="brush-size-val">60px</span>
+          </div>
+          <input type="range" id="slider-brush" min="10" max="250" value="60">
+        </div>
+
+        <div class="range-group">
+          <div class="range-label">
+            <span>Прозрачность для DM</span>
+            <span id="fog-opacity-val">50%</span>
+          </div>
+          <input type="range" id="slider-opacity" min="10" max="100" value="50">
+        </div>
+
+        <div class="grid-2" style="margin-top: 8px;">
+          <button class="btn" id="btn-fog-fill">Скрыть всё</button>
+          <button class="btn" id="btn-fog-clear">Открыть всё</button>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-title">
+          <span>[02] Сетка</span>
+          <button class="btn" id="btn-grid-toggle" style="height: 18px; padding: 0 6px; font-size: 8px;">ВЫКЛ</button>
+        </div>
+        <div class="range-group">
+          <div class="range-label">
+            <span>Размер клетки</span>
+            <span id="grid-size-val">50px</span>
+          </div>
+          <input type="range" id="slider-grid" min="20" max="150" value="50">
+        </div>
+      </div>
+
+      <div class="section-card" style="border-bottom: none;">
+        <div class="section-title">
+          <span>[03] Горячие клавиши</span>
+        </div>
+        <div style="color: var(--ink-muted); font-size: 9px; line-height: 1.6;">
+          • Колесико мыши: Зум<br>
+          • ПКМ / Пробел + ЛКМ: Панорамирование<br>
+          • R: Режим открытия тумана<br>
+          • H: Режим сокрытия тумана<br>
+          • F: Полноэкранный режим
+        </div>
+      </div>
+    </aside>
+
+    <div id="viewport">
+      <div id="map-transform-container">
+        <img id="map-img" alt="Карта">
+        <canvas id="fog-canvas"></canvas>
+        <canvas id="grid-canvas"></canvas>
+      </div>
+
+      <div class="map-status-overlay" id="map-status">
+        Zoom: 100% | Нет загруженной карты
+      </div>
+
+      <div class="map-controls-floating">
+        <button class="btn" id="btn-zoom-in">+</button>
+        <button class="btn" id="btn-zoom-out">-</button>
+        <button class="btn" id="btn-zoom-fit">⟲</button>
+        <button class="btn" id="btn-fullscreen">⛶</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // Cross-window sync with Safari 13 / macOS 10.13 fallback
+      var CHANNEL_NAME = 'dnd-projector-channel';
+      var STORAGE_KEY = '__dnd_projector_sync__';
+      var bc = null;
+      var hasBC = typeof window !== 'undefined' && 'BroadcastChannel' in window;
+      
+      if (hasBC) {
+        try {
+          bc = new BroadcastChannel(CHANNEL_NAME);
+          bc.onmessage = function(e) { handleSync(e.data); };
+        } catch(e) {
+          hasBC = false;
+        }
+      }
+      window.addEventListener('storage', function(e) {
+        if (e.key === STORAGE_KEY && e.newValue) {
+          try { handleSync(JSON.parse(e.newValue)); } catch(err) {}
+        }
+      });
+
+      function sendSync(msg) {
+        msg.timestamp = Date.now();
+        if (bc) { try { bc.postMessage(msg); } catch(e) {} }
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(msg)); } catch(e) {}
+      }
+
+      function handleSync(msg) {
+        if (!msg) return;
+        if (msg.type === 'PING') {
+          sendSync({ type: 'PONG' });
+        }
+      }
+
+      // App State
+      var viewport = { x: 0, y: 0, scale: 1 };
+      var mapDimensions = { width: 1920, height: 1080 };
+      var brushMode = 'reveal'; // reveal | hide | pan | measure
+      var brushSize = 60;
+      var fogOpacity = 0.5;
+      var isDrawing = false;
+      var isPanning = false;
+      var panStart = { x: 0, y: 0 };
+      var currentStroke = [];
+      var grid = { enabled: false, size: 50 };
+
+      // DOM Elements
+      var mapContainer = document.getElementById('map-transform-container');
+      var mapImg = document.getElementById('map-img');
+      var fogCanvas = document.getElementById('fog-canvas');
+      var gridCanvas = document.getElementById('grid-canvas');
+      var viewportEl = document.getElementById('viewport');
+      var mapStatus = document.getElementById('map-status');
+      var fogCtx = fogCanvas.getContext('2d');
+      var gridCtx = gridCanvas.getContext('2d');
+
+      // Default Canvas setup
+      function initMap(src, w, h) {
+        mapDimensions.width = w || 1920;
+        mapDimensions.height = h || 1080;
+        mapImg.src = src;
+        mapImg.width = mapDimensions.width;
+        mapImg.height = mapDimensions.height;
+
+        fogCanvas.width = mapDimensions.width;
+        fogCanvas.height = mapDimensions.height;
+        gridCanvas.width = mapDimensions.width;
+        gridCanvas.height = mapDimensions.height;
+
+        fillFog();
+        renderGrid();
+        fitToScreen();
+        sendSync({ type: 'MAP_LOAD', payload: { src: src, width: mapDimensions.width, height: mapDimensions.height } });
+      }
+
+      function fillFog() {
+        fogCtx.save();
+        fogCtx.globalCompositeOperation = 'source-over';
+        fogCtx.fillStyle = 'rgba(0, 0, 0, ' + fogOpacity + ')';
+        fogCtx.fillRect(0, 0, mapDimensions.width, mapDimensions.height);
+        fogCtx.restore();
+        sendSync({ type: 'FOG_FILL' });
+      }
+
+      function clearFog() {
+        fogCtx.clearRect(0, 0, mapDimensions.width, mapDimensions.height);
+        sendSync({ type: 'FOG_CLEAR' });
+      }
+
+      function renderGrid() {
+        gridCtx.clearRect(0, 0, mapDimensions.width, mapDimensions.height);
+        if (!grid.enabled) return;
+        gridCtx.save();
+        gridCtx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        gridCtx.lineWidth = 1;
+        gridCtx.beginPath();
+        for (var x = 0; x <= mapDimensions.width; x += grid.size) {
+          gridCtx.moveTo(x, 0); gridCtx.lineTo(x, mapDimensions.height);
+        }
+        for (var y = 0; y <= mapDimensions.height; y += grid.size) {
+          gridCtx.moveTo(0, y); gridCtx.lineTo(mapDimensions.width, y);
+        }
+        gridCtx.stroke();
+        gridCtx.restore();
+      }
+
+      function updateTransform() {
+        mapContainer.style.webkitTransform = 'translate3d(' + viewport.x + 'px, ' + viewport.y + 'px, 0) scale(' + viewport.scale + ')';
+        mapContainer.style.transform = 'translate3d(' + viewport.x + 'px, ' + viewport.y + 'px, 0) scale(' + viewport.scale + ')';
+        mapStatus.textContent = 'Zoom: ' + Math.round(viewport.scale * 100) + '% | ' + mapDimensions.width + 'x' + mapDimensions.height + 'px';
+        sendSync({ type: 'VIEWPORT_SYNC', payload: viewport });
+      }
+
+      function fitToScreen() {
+        var vw = viewportEl.clientWidth;
+        var vh = viewportEl.clientHeight;
+        var scale = Math.min((vw - 40) / mapDimensions.width, (vh - 40) / mapDimensions.height, 1);
+        viewport.scale = scale;
+        viewport.x = (vw - mapDimensions.width * scale) / 2;
+        viewport.y = (vh - mapDimensions.height * scale) / 2;
+        updateTransform();
+      }
+
+      // Drawing fog
+      function drawSegment(p1, p2, mode) {
+        fogCtx.save();
+        fogCtx.lineCap = 'round';
+        fogCtx.lineJoin = 'round';
+        fogCtx.lineWidth = brushSize;
+        if (mode === 'reveal') {
+          fogCtx.globalCompositeOperation = 'destination-out';
+          fogCtx.strokeStyle = '#000';
+        } else {
+          fogCtx.globalCompositeOperation = 'source-over';
+          fogCtx.strokeStyle = 'rgba(0, 0, 0, ' + fogOpacity + ')';
+        }
+        fogCtx.beginPath();
+        fogCtx.moveTo(p1.x, p1.y);
+        fogCtx.lineTo(p2.x, p2.y);
+        fogCtx.stroke();
+        fogCtx.restore();
+      }
+
+      function getMapCoords(e) {
+        var rect = viewportEl.getBoundingClientRect();
+        var clientX = e.clientX - rect.left;
+        var clientY = e.clientY - rect.top;
+        return {
+          x: (clientX - viewport.x) / viewport.scale,
+          y: (clientY - viewport.y) / viewport.scale
+        };
+      }
+
+      // Mouse Events
+      viewportEl.addEventListener('mousedown', function(e) {
+        if (e.button === 1 || e.button === 2 || brushMode === 'pan') {
+          isPanning = true;
+          panStart = { x: e.clientX - viewport.x, y: e.clientY - viewport.y };
+          return;
+        }
+        if (e.button === 0 && (brushMode === 'reveal' || brushMode === 'hide')) {
+          isDrawing = true;
+          var pt = getMapCoords(e);
+          currentStroke = [pt];
+          drawSegment(pt, pt, brushMode);
+        }
+      });
+
+      window.addEventListener('mousemove', function(e) {
+        if (isPanning) {
+          viewport.x = e.clientX - panStart.x;
+          viewport.y = e.clientY - panStart.y;
+          updateTransform();
+          return;
+        }
+        if (isDrawing) {
+          var pt = getMapCoords(e);
+          var prev = currentStroke[currentStroke.length - 1];
+          drawSegment(prev, pt, brushMode);
+          currentStroke.push(pt);
+        }
+      });
+
+      window.addEventListener('mouseup', function(e) {
+        if (isPanning) isPanning = false;
+        if (isDrawing) {
+          isDrawing = false;
+          sendSync({
+            type: 'FOG_STROKE',
+            payload: {
+              type: 'stroke',
+              mode: brushMode,
+              brushSize: brushSize,
+              points: currentStroke
+            }
+          });
+          currentStroke = [];
+        }
+      });
+
+      viewportEl.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        var rect = viewportEl.getBoundingClientRect();
+        var mouseX = e.clientX - rect.left;
+        var mouseY = e.clientY - rect.top;
+        var delta = e.deltaY < 0 ? 1.15 : 0.87;
+        var newScale = Math.min(Math.max(viewport.scale * delta, 0.1), 5.0);
+        viewport.x = mouseX - (mouseX - viewport.x) * (newScale / viewport.scale);
+        viewport.y = mouseY - (mouseY - viewport.y) * (newScale / viewport.scale);
+        viewport.scale = newScale;
+        updateTransform();
+      }, { passive: false });
+
+      // Button controls
+      document.getElementById('btn-upload').onclick = function() {
+        document.getElementById('file-input').click();
+      };
+      document.getElementById('file-input').onchange = function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+        var url = URL.createObjectURL(file);
+        var tempImg = new Image();
+        tempImg.onload = function() {
+          initMap(url, tempImg.naturalWidth, tempImg.naturalHeight);
+        };
+        tempImg.src = url;
+      };
+
+      document.getElementById('btn-mode-reveal').onclick = function() {
+        brushMode = 'reveal';
+        document.getElementById('brush-mode-label').textContent = 'ОТКРЫТЬ';
+        updateModeBtns();
+      };
+      document.getElementById('btn-mode-hide').onclick = function() {
+        brushMode = 'hide';
+        document.getElementById('brush-mode-label').textContent = 'СКРЫТЬ';
+        updateModeBtns();
+      };
+      document.getElementById('btn-mode-pan').onclick = function() {
+        brushMode = 'pan';
+        document.getElementById('brush-mode-label').textContent = 'РУКА';
+        updateModeBtns();
+      };
+      document.getElementById('btn-mode-measure').onclick = function() {
+        brushMode = 'measure';
+        document.getElementById('brush-mode-label').textContent = 'ЛИНЕЙКА';
+        updateModeBtns();
+      };
+
+      function updateModeBtns() {
+        document.getElementById('btn-mode-reveal').className = 'btn ' + (brushMode === 'reveal' ? 'btn-accent' : '');
+        document.getElementById('btn-mode-hide').className = 'btn ' + (brushMode === 'hide' ? 'btn-accent' : '');
+        document.getElementById('btn-mode-pan').className = 'btn ' + (brushMode === 'pan' ? 'btn-accent' : '');
+        document.getElementById('btn-mode-measure').className = 'btn ' + (brushMode === 'measure' ? 'btn-accent' : '');
+      }
+
+      document.getElementById('slider-brush').oninput = function(e) {
+        brushSize = parseInt(e.target.value, 10);
+        document.getElementById('brush-size-val').textContent = brushSize + 'px';
+      };
+
+      document.getElementById('slider-opacity').oninput = function(e) {
+        fogOpacity = parseInt(e.target.value, 10) / 100;
+        document.getElementById('fog-opacity-val').textContent = Math.round(fogOpacity * 100) + '%';
+        fillFog();
+      };
+
+      document.getElementById('btn-fog-fill').onclick = fillFog;
+      document.getElementById('btn-fog-clear').onclick = clearFog;
+
+      document.getElementById('btn-grid-toggle').onclick = function() {
+        grid.enabled = !grid.enabled;
+        this.textContent = grid.enabled ? 'ВКЛ' : 'ВЫКЛ';
+        this.className = 'btn ' + (grid.enabled ? 'btn-accent' : '');
+        renderGrid();
+        sendSync({ type: 'GRID_UPDATE', payload: grid });
+      };
+
+      document.getElementById('slider-grid').oninput = function(e) {
+        grid.size = parseInt(e.target.value, 10);
+        document.getElementById('grid-size-val').textContent = grid.size + 'px';
+        renderGrid();
+        sendSync({ type: 'GRID_UPDATE', payload: grid });
+      };
+
+      document.getElementById('btn-zoom-in').onclick = function() {
+        viewport.scale = Math.min(viewport.scale * 1.25, 5);
+        updateTransform();
+      };
+      document.getElementById('btn-zoom-out').onclick = function() {
+        viewport.scale = Math.max(viewport.scale / 1.25, 0.1);
+        updateTransform();
+      };
+      document.getElementById('btn-zoom-fit').onclick = fitToScreen;
+
+      // Fullscreen support with webkit prefix for macOS 10.13 Safari
+      function toggleFullScreen() {
+        var doc = document;
+        var docEl = document.documentElement;
+        var isFs = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement;
+        if (!isFs) {
+          if (docEl.requestFullscreen) docEl.requestFullscreen().catch(function(){});
+          else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+        } else {
+          if (doc.exitFullscreen) doc.exitFullscreen().catch(function(){});
+          else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+        }
+      }
+      document.getElementById('btn-fullscreen').onclick = toggleFullScreen;
+
+      document.getElementById('btn-open-player').onclick = function() {
+        window.open(window.location.href, '_blank', 'menubar=no,toolbar=no,location=no,status=no');
+      };
+
+      window.addEventListener('keydown', function(e) {
+        var key = e.key.toLowerCase();
+        if (key === 'r') document.getElementById('btn-mode-reveal').click();
+        if (key === 'h') document.getElementById('btn-mode-hide').click();
+        if (key === 'p') document.getElementById('btn-mode-pan').click();
+        if (key === 'm') document.getElementById('btn-mode-measure').click();
+        if (key === 'f') toggleFullScreen();
+      });
+
+      window.addEventListener('resize', fitToScreen);
+
+      // Create placeholder tactical grid on startup
+      var initCanvas = document.createElement('canvas');
+      initCanvas.width = 1920;
+      initCanvas.height = 1080;
+      var ictx = initCanvas.getContext('2d');
+      ictx.fillStyle = '#111318';
+      ictx.fillRect(0, 0, 1920, 1080);
+      ictx.strokeStyle = '#222736';
+      ictx.lineWidth = 2;
+      for (var x = 0; x <= 1920; x += 80) { ictx.moveTo(x, 0); ictx.lineTo(x, 1080); }
+      for (var y = 0; y <= 1080; y += 80) { ictx.moveTo(0, y); ictx.lineTo(1920, y); }
+      ictx.stroke();
+      ictx.fillStyle = '#38bdf8';
+      ictx.font = '24px monospace';
+      ictx.textAlign = 'center';
+      ictx.fillText('Загрузите карту через кнопку "Загрузить карту"', 960, 540);
+      initMap(initCanvas.toDataURL(), 1920, 1080);
+
+    })();
+  </script>
+</body>
+</html>

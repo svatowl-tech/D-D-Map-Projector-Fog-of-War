@@ -56,6 +56,15 @@ interface GeneratorTabInfo {
 
 const GENERATOR_TABS: GeneratorTabInfo[] = [
   {
+    id: 'dungeon',
+    title: 'Подземелье',
+    subtitle: 'One Page Dungeon',
+    icon: Castle,
+    src: '/Dungeon/index.html',
+    accentColor: '#8b5cf6', // purple
+    defaultGridSize: 64,
+  },
+  {
     id: 'cave',
     title: 'Пещера',
     subtitle: 'Подземелья и гроты',
@@ -100,6 +109,15 @@ const GENERATOR_TABS: GeneratorTabInfo[] = [
     src: '/city/index.html',
     defaultGridSize: 50,
   },
+  {
+    id: 'battlemap',
+    title: 'Боевая карта',
+    subtitle: 'Процедурные реки, биотопы, рельеф',
+    icon: Compass,
+    accentColor: '#22c55e', // green
+    src: '/Battlemap/index.html',
+    defaultGridSize: 70,
+  },
 ];
 
 export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
@@ -107,7 +125,7 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
   onClose,
   onImportMapToTable,
   onImportBatchFloors,
-  initialType = 'dwell',
+  initialType = 'dungeon',
 }) => {
   const [activeType, setActiveType] = useState<GeneratorType>(initialType);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -138,11 +156,13 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
       const data = event.data;
 
       if (
+        data.type === 'DUNGEON_MAP_EXPORT' ||
         data.type === 'CAVE_MAP_EXPORT' ||
         data.type === 'CITY_MAP_EXPORT' ||
         data.type === 'DWELLINGS_MAP_EXPORT' ||
         data.type === 'TAVERN_MAP_EXPORT' ||
-        data.type === 'VILLAGE_MAP_EXPORT'
+        data.type === 'VILLAGE_MAP_EXPORT' ||
+        data.type === 'BATTLEMAP_MAP_EXPORT'
       ) {
         const payload: GeneratorExportEventData = {
           type: data.type,
@@ -201,7 +221,9 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
     showToast(downloadFile ? 'Экспорт и скачивание...' : 'Перенос карты на стол...');
 
     // 1. Вызываем нативный экспорт генератора через postMessage
-    if (activeType === 'cave') {
+    if (activeType === 'dungeon') {
+      sendToGenerator('EXPORT_PNG', { download: downloadFile });
+    } else if (activeType === 'cave') {
       sendToGenerator('EXPORT_PNG', { download: downloadFile });
     } else if (activeType === 'dwell') {
       sendToGenerator('EXPORT_PNG', { download: downloadFile });
@@ -210,6 +232,8 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
     } else if (activeType === 'village') {
       sendToGenerator('EXPORT_PNG', { download: downloadFile });
     } else if (activeType === 'city') {
+      sendToGenerator('EXPORT_PNG', { download: downloadFile });
+    } else if (activeType === 'battlemap') {
       sendToGenerator('EXPORT_PNG', { download: downloadFile });
     }
 
@@ -397,6 +421,67 @@ export const GeneratorStudio: React.FC<GeneratorStudioProps> = ({
             </button>
 
             {/* Специфичные контролы для каждого генератора */}
+            {activeType === 'dungeon' && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  onClick={() => sendToGenerator('TOGGLE_GRID')}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded border border-slate-700/60"
+                  title="Сетка (G)"
+                >
+                  Сетка (G)
+                </button>
+                <button
+                  onClick={() => sendToGenerator('TOGGLE_NOTES')}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded border border-slate-700/60"
+                  title="Заметки комнат (N)"
+                >
+                  Заметки (N)
+                </button>
+                <button
+                  onClick={() => sendToGenerator('TOGGLE_PROPS')}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded border border-slate-700/60"
+                  title="Декор и мебель (P)"
+                >
+                  Предметы (P)
+                </button>
+                <button
+                  onClick={() => sendToGenerator('TOGGLE_SECRETS')}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-amber-300 rounded border border-slate-700/60"
+                  title="Секретные комнаты (H)"
+                >
+                  Секреты (H)
+                </button>
+                <button
+                  onClick={() => sendToGenerator('TOGGLE_LEGEND')}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded border border-slate-700/60"
+                  title="Показать/скрыть легенду (L)"
+                >
+                  Легенда (L)
+                </button>
+                <button
+                  onClick={() => sendToGenerator('TOGGLE_WATER')}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-emerald-400 rounded border border-slate-700/60"
+                  title="Вода в подземелье (W)"
+                >
+                  Вода (W)
+                </button>
+                <button
+                  onClick={() => sendToGenerator('STYLE_PRESET', { preset: 'ancient' })}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-amber-400 rounded border border-slate-700/60"
+                  title="Стиль: Древний (2)"
+                >
+                  Стиль: Древний
+                </button>
+                <button
+                  onClick={() => sendToGenerator('STYLE_PRESET', { preset: 'light' })}
+                  className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-sky-300 rounded border border-slate-700/60"
+                  title="Стиль: Светлый (3)"
+                >
+                  Светлый
+                </button>
+              </div>
+            )}
+
             {activeType === 'cave' && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <button

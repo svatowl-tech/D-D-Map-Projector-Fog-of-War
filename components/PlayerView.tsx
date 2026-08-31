@@ -296,12 +296,40 @@ export const PlayerView: React.FC = () => {
     };
   }, [handleIncomingMessage, reportViewportToDM]);
 
-  // Переключение в полноэкранный режим
+  // Переключение в полноэкранный режим с поддержкой Safari 13 / macOS 10.13
   const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
+    try {
+      const doc = document as any;
+      const docEl = document.documentElement as any;
+      const isFullscreen =
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement;
+
+      if (!isFullscreen) {
+        if (docEl.requestFullscreen) {
+          docEl.requestFullscreen().catch(() => {});
+        } else if (docEl.webkitRequestFullscreen) {
+          docEl.webkitRequestFullscreen();
+        } else if (docEl.webkitRequestFullScreen) {
+          docEl.webkitRequestFullScreen();
+        } else if (docEl.mozRequestFullScreen) {
+          docEl.mozRequestFullScreen();
+        }
+      } else {
+        if (doc.exitFullscreen) {
+          doc.exitFullscreen().catch(() => {});
+        } else if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        } else if (doc.webkitCancelFullScreen) {
+          doc.webkitCancelFullScreen();
+        } else if (doc.mozCancelFullScreen) {
+          doc.mozCancelFullScreen();
+        }
+      }
+    } catch {
+      // Игнорируем ошибки ограничений политики безопасности iFrame/браузера
     }
   };
 

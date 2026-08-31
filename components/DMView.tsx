@@ -43,6 +43,10 @@ import { CampaignCardView } from '@/components/dnd/CampaignCardView';
 import { MapLibraryModal } from '@/components/dnd/MapLibraryModal';
 import { UnifiedAssetFolderModal } from '@/components/dm/UnifiedAssetFolderModal';
 import { PolzaAiEngineModal } from '@/components/dm/PolzaAiEngineModal';
+import { AudioPlayerModal } from '@/components/audio/AudioPlayerModal';
+import { AudioMiniPlayer } from '@/components/audio/AudioMiniPlayer';
+import { audioService } from '@/lib/audio/audio-engine';
+import { scanFilesToPlaylists } from '@/lib/audio/folder-scanner';
 import { processUploadedFiles } from '@/lib/fsSync';
 import { CampaignCard } from '@/lib/dnd-engine/types';
 import {
@@ -91,6 +95,7 @@ import {
   Target,
   Crosshair,
   MonitorPlay,
+  Music,
 } from 'lucide-react';
 
 interface DMViewProps {
@@ -105,6 +110,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     return defaultList[0] ? defaultList[0].id : null;
   });
   const [isMapLibraryOpen, setIsMapLibraryOpen] = useState<boolean>(false);
+  const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState<boolean>(false);
 
   // --- Состояния медиа и карты на столе ---
   const [media, setMedia] = useState<MediaState>(() => {
@@ -142,7 +148,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
   // --- Состояние модального окна Генераторов Карт ---
   const [isGenStudioOpen, setIsGenStudioOpen] = useState<boolean>(false);
-  const [activeGenType, setActiveGenType] = useState<GeneratorType>('dwell');
+  const [activeGenType, setActiveGenType] = useState<GeneratorType>('dungeon');
 
   // --- Состояние D&D Campaign Generator Suite & Карточек ---
   const [isCampaignSuiteOpen, setIsCampaignSuiteOpen] = useState<boolean>(false);
@@ -167,6 +173,10 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
   const lastSyncTimeRef = useRef<number>(0);
   const [isFogBaseFilled, setIsFogBaseFilled] = useState<boolean>(false);
+
+  // --- Состояние Drag & Drop карты непосредственно на стол ---
+  const [isDraggingOverTable, setIsDraggingOverTable] = useState<boolean>(false);
+  const dragCounterRef = useRef<number>(0);
 
   // --- Сетка ---
   const [grid, setGrid] = useState<GridConfig>({
@@ -869,43 +879,178 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     [multiFloorGroup, isFogBaseFilled, fitMapToScreen, viewport, grid, projectedCard, pinnedCards, showToast]
   );
 
-  // 11. Обработка загрузки локального файла
-  const handleFileUpload = useCallback(
-    async (file: File) => {
-      if (!file) return;
+  // 11. Обработка загрузки и Drag & Drop локальных файлов карт и музыки на стол
+  const handleFilesDrop = useCallback(
+    async (files: FileList | File[]) => {
+      const fileArray = Array.from(files);
+      if (fileArray.length === 0) return;
 
-      const isImage = file.type.startsWith('image/');
-      const isVideo = file.type.startsWith('video/');
+      // Проверяем, не перетащил ли пользователь аудиофайлы / музыку
+      const audioFiles = fileArray.filter(
+        (f) =>
+          f.type.startsWith('audio/') ||
+          /\.(mp3|wav|ogg|flac|m4a|aac|opus|weba)$/i.test(f.name)
+      );
 
-      if (!isImage && !isVideo) {
-        showToast('Ошибка: разрешены только изображения (JPG, PNG, WebP) или видео (MP4, WebM)');
+      if (audioFiles.length > 0) {
+        try {
+          const scannedPlaylists = await scanFilesToPlaylists(audioFiles);
+          if (scannedPlaylists.length > 0) {
+            audioService.setPlaylists(scannedPlaylists);
+            setIsAudioPlayerOpen(true);
+            const total = scannedPlaylists.reduce((acc, p) => acc + p.trackCount, 0);
+            showToast(
+              `🎵 Загружено ${scannedPlaylists.length} музыкальных плейлистов (${total} треков) через Drag & Drop!`
+            );
+            // Если среди файлов были только аудио, завершаем обработку
+            if (audioFiles.length === fileArray.length) {
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('Ошибка обработки аудио через drop:', err);
+        }
+      }
+
+      const validFiles = fileArray.filter(
+        (f) => f.type.startsWith('image/') || f.type.startsWith('video/')
+      );
+
+      if (validFiles.length === 0) {
+        if (audioFiles.length === 0) {
+          showToast('Ошибка: перетащите файл карты (JPG, PNG, WebP, MP4) или аудиофайл (MP3, WAV, OGG)');
+        }
         return;
       }
 
-      if (file.size > 80 * 1024 * 1024) {
-        showToast('Внимание: файл >80 МБ может замедлить работу на слабых устройствах');
+      const primaryFile = validFiles[0];
+      const isVideo = primaryFile.type.startsWith('video/');
+
+      if (primaryFile.size > 80 * 1024 * 1024) {
+        showToast('Внимание: файл >80 МБ может обрабатываться чуть дольше');
       }
 
       try {
-        await processUploadedFiles([file], isVideo ? 'animated_maps' : 'maps');
-        const newLoc = await createLocationFromFile(file);
+        // Фоновая индексация файлов в хранилище ресурсов
+        processUploadedFiles(validFiles, isVideo ? 'animated_maps' : 'maps').catch((err) => {
+          console.warn('Фоновая индексация ресурсов завершилась:', err);
+        });
+
+        // Создаем карту-локацию для основного файла
+        const primaryLoc = await createLocationFromFile(primaryFile);
+
+        // Создаем локации для остальных перетащенных файлов (если их несколько)
+        const otherLocs = await Promise.all(
+          validFiles.slice(1).map((f) => createLocationFromFile(f))
+        );
+
+        const allNewLocs = [primaryLoc, ...otherLocs];
+
         setMapLocations((prev) => {
-          const updated = [newLoc, ...prev];
+          const updated = [...allNewLocs, ...prev];
           saveMapLibrary(updated);
           return updated;
         });
-        setActiveLocationId(newLoc.id);
-        saveActiveMapId(newLoc.id);
 
+        setActiveLocationId(primaryLoc.id);
+        saveActiveMapId(primaryLoc.id);
         setMultiFloorGroup(null);
-        loadMediaUrl(newLoc.dataUrl || newLoc.url, newLoc.type, newLoc.name, newLoc.width, newLoc.height, newLoc.grid.size);
-        showToast(`✓ Локация «${newLoc.name}» загружена и индексирована в AetherMap_Data`);
+
+        // Загружаем карту на стол мастера
+        loadMediaUrl(
+          primaryLoc.dataUrl || primaryLoc.url,
+          primaryLoc.type,
+          primaryLoc.name,
+          primaryLoc.width,
+          primaryLoc.height,
+          primaryLoc.grid.size,
+          false // Сброс старого тумана под новую карту
+        );
+
+        // Принудительно и мгновенно отправляем смену карты на экран игроков
+        syncRef.current?.send({
+          type: 'MEDIA_CHANGE',
+          payload: {
+            media: {
+              type: primaryLoc.type,
+              url: primaryLoc.dataUrl || primaryLoc.url,
+              name: primaryLoc.name,
+              width: primaryLoc.width,
+              height: primaryLoc.height,
+              aspectRatio: primaryLoc.width / primaryLoc.height,
+            },
+            dataUrl: primaryLoc.dataUrl || primaryLoc.url,
+          },
+          timestamp: Date.now(),
+        });
+
+        if (validFiles.length === 1) {
+          showToast(`✓ Карта «${primaryLoc.name}» загружена и мгновенно выведена на экран игроков!`);
+        } else {
+          showToast(`✓ Карта «${primaryLoc.name}» на столе (добавлено ${validFiles.length} карт в библиотеку)`);
+        }
       } catch (err) {
-        showToast('Не удалось обработать файл карты');
+        console.error('Ошибка обработки карты через drag-and-drop:', err);
+        showToast('Не удалось обработать перетащенный файл карты');
       }
     },
     [loadMediaUrl, showToast]
   );
+
+  const handleFileUpload = useCallback(
+    (file: File) => {
+      handleFilesDrop([file]);
+    },
+    [handleFilesDrop]
+  );
+
+  // 11.1 Глобальный перехват Drag & Drop для мгновенного обновления стола
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+        dragCounterRef.current += 1;
+        setIsDraggingOverTable(true);
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current -= 1;
+      if (dragCounterRef.current <= 0) {
+        dragCounterRef.current = 0;
+        setIsDraggingOverTable(false);
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current = 0;
+      setIsDraggingOverTable(false);
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleFilesDrop(e.dataTransfer.files);
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [handleFilesDrop]);
 
   // 12. Точный контроль камеры игроков (Player Viewport Controls)
   const handlePushViewToPlayer = useCallback(() => {
@@ -1245,6 +1390,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       if (e.key.toLowerCase() === 'm') setBrushMode('measure');
       if (e.key.toLowerCase() === 'p') setBrushMode('pan');
       if (e.key.toLowerCase() === 'l') setIsMapLibraryOpen(true);
+      if (e.key.toLowerCase() === 'm' && e.shiftKey) setIsAudioPlayerOpen((prev) => !prev);
       if (e.key.toLowerCase() === 'g') {
         setGrid((g) => {
           const next = { ...g, enabled: !g.enabled };
@@ -1302,7 +1448,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     showToast('Скачивание автономного файла dnd-projector.html начато');
   };
 
-  const handleOpenGenStudio = (type: GeneratorType = 'dwell') => {
+  const handleOpenGenStudio = (type: GeneratorType = 'dungeon') => {
     setActiveGenType(type);
     setIsGenStudioOpen(true);
   };
@@ -1346,49 +1492,48 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   return (
     <div
       id="dm-app-container"
-      className="flex flex-col h-screen w-screen bg-[#0F0F0F] text-[#E0E0E0] font-mono overflow-hidden select-none"
+      className="flex flex-col h-screen w-screen bg-[var(--bg)] text-[var(--ink)] font-mono overflow-hidden select-none"
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 1. Верхний компактный тактический Header */}
-      <header className="flex items-center justify-between px-3 sm:px-4 h-12 border-b border-[#2A2A2A] bg-[#161616] flex-shrink-0 z-30">
-        <div className="flex items-center gap-3">
+      {/* 1. Верхний компактный Header (Variation 5) */}
+      <header className="flex items-center justify-between px-4 h-[48px] border-b border-[var(--ink-faint)] bg-[var(--surface)] flex-shrink-0 z-30">
+        <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-[#FF4E00]" />
-            <span className="text-[#FF4E00] font-bold text-xs tracking-tighter uppercase hidden sm:inline">
-              C2D-PROJ v2.0 // DM SCREEN
+            <Shield className="w-[18px] height-[18px] text-[var(--accent)]" />
+            <span className="font-display font-extrabold text-[12px] text-[var(--accent)] tracking-tight">
+              DM SCREEN v2.0
             </span>
           </div>
-
-          <div className="h-4 w-[1px] bg-[#2A2A2A] hidden sm:block" />
 
           {/* Индикатор связи с проектором */}
           <div
             id="player-connection-indicator"
-            className="flex items-center gap-2"
+            className="label-mono flex items-center gap-2"
             title={playerConnected ? 'Экран игроков подключен' : 'Экран игроков не открыт'}
           >
             <span
-              className={`w-2 h-2 rounded-full ${
-                playerConnected
-                  ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.9)] animate-pulse'
-                  : 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.8)]'
-              }`}
+              className="status-dot"
+              style={{
+                background: playerConnected ? '#10b981' : '#ef4444',
+                boxShadow: playerConnected ? '0 0 8px #10b981' : '0 0 8px #ef4444',
+              }}
             />
-            <span className="text-[10px] uppercase text-[#888]">
-              {playerConnected ? 'Projector: Online' : 'Projector: Offline'}
-            </span>
+            <span>{playerConnected ? 'Projector: Online' : 'Projector: Offline'}</span>
           </div>
-
-          <div className="h-4 w-[1px] bg-[#2A2A2A] hidden md:block" />
 
           {/* Кнопка быстрого вызова библиотеки карт с активной картой */}
           <button
             onClick={() => setIsMapLibraryOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1e2433] hover:bg-[#283247] border border-[#3b4866] text-[#93c5fd] hover:text-white text-[11px] font-semibold transition cursor-pointer"
+            className="btn hidden sm:inline-flex"
+            style={{
+              borderColor: '#38bdf8',
+              color: '#38bdf8',
+              background: 'rgba(56, 189, 248, 0.05)',
+            }}
             title="Открыть библиотеку карт и пресетов (горячая клавиша L)"
           >
             <MapIcon className="w-3.5 h-3.5 text-[#38bdf8]" />
-            <span className="truncate max-w-[160px]">{media.name || 'Библиотека карт'}</span>
+            <span className="truncate max-w-[170px]">{media.name || 'Библиотека карт'}</span>
             <span className="text-[9px] px-1 py-0.2 rounded bg-black/40 text-[#94a3b8]">
               {mapLocations.length}
             </span>
@@ -1400,57 +1545,67 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           <button
             id="btn-open-dnd-suite-header"
             onClick={() => handleOpenDndSuite('bestiary')}
-            className="px-3 py-1 bg-gradient-to-r from-red-700 via-red-600 to-amber-600 hover:from-red-600 hover:to-amber-500 text-white font-bold text-[11px] rounded uppercase transition-all shadow-md shadow-red-900/30 flex items-center gap-1.5 cursor-pointer border border-red-500/40"
+            className="btn"
             title="Генератор монстров (CR 0-30), NPC, лута, магазинов, экипировки, магии и быстрый справочник правил"
           >
-            <ScrollText className="w-3.5 h-3.5 text-amber-300" />
-            <span className="hidden sm:inline">D&D Генераторы & Справочник</span>
-            <span className="sm:hidden">D&D 5e</span>
+            <ScrollText className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">D&D Suite</span>
+          </button>
+
+          {/* Кнопка Аудиоплеера и Саундборда */}
+          <button
+            id="btn-open-audio-header"
+            onClick={() => setIsAudioPlayerOpen(true)}
+            className="btn"
+            style={{ borderColor: '#f59e0b', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.08)' }}
+            title="Открыть D&D Аудиоплеер и Саундборд SFX (горячая клавиша Shift+M)"
+          >
+            <Music className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Аудио & SFX</span>
           </button>
 
           {/* Главная кнопка генераторов карт */}
           <button
             id="btn-open-generators-header"
-            onClick={() => handleOpenGenStudio('dwell')}
-            className="px-3 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-bold text-[11px] rounded uppercase transition-all shadow-md shadow-amber-500/20 flex items-center gap-1.5 cursor-pointer"
-            title="Открыть генератор пещер, городов, особняков, таверн или деревень"
+            onClick={() => handleOpenGenStudio('battlemap')}
+            className="btn"
+            title="Открыть генератор боевых карт, дикой местности, пещер, городов, особняков, таверн или деревень"
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Генераторы карт</span>
-            <span className="sm:hidden">Генератор</span>
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Генераторы Карт</span>
           </button>
 
           {/* Кнопка открытия Polza AI Engine & Campaign Studio */}
           <button
             id="btn-open-polza-ai"
             onClick={() => setIsPolzaAiModalOpen(true)}
-            className="px-2.5 py-1 bg-gradient-to-r from-purple-700 via-indigo-600 to-[#ff4e00] hover:opacity-90 text-white font-bold text-[11px] rounded uppercase transition-all shadow-md flex items-center gap-1.5 cursor-pointer border border-purple-400/40"
+            className="btn"
+            style={{ borderColor: '#a855f7', color: '#a855f7' }}
             title="Открыть JSON AI Engine, Full Campaign Engine и ИИ-Генератор иллюстраций (/api/polza)"
           >
-            <Bot className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
-            <span className="hidden lg:inline">JSON AI & Campaign Engine</span>
-            <span className="lg:hidden">AI Studio</span>
+            <Bot className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden lg:inline">AI Studio</span>
           </button>
 
           {/* Кнопка открытия единого каталога AetherMap_Data */}
           <button
             id="btn-open-aether-data"
             onClick={() => setIsUnifiedFolderOpen(true)}
-            className="px-2.5 py-1 bg-[#ff4e00]/10 hover:bg-[#ff4e00]/20 text-[#ff4e00] border border-[#ff4e00]/40 text-[11px] font-semibold rounded uppercase transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+            className="btn hidden xl:inline-flex"
             title="Открыть структуру и реестр локальных ресурсов AetherMap_Data"
           >
-            <HardDrive className="w-3.5 h-3.5" />
-            <span className="hidden lg:inline">AetherMap_Data</span>
+            <HardDrive className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span>AetherMap_Data</span>
           </button>
 
           {/* Кнопка открытия окна игроков */}
           <button
             id="btn-open-projector"
             onClick={onOpenPlayerWindow}
-            className="px-3 py-1 bg-[#2A2A2A] hover:bg-[#3A3A3A] text-[11px] text-[#E0E0E0] border border-[#444] rounded uppercase transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="btn"
             title="Открыть второе окно проектора для игроков"
           >
-            <ExternalLink className="w-3.5 h-3.5 text-[#FF4E00]" />
+            <ExternalLink className="w-3.5 h-3.5 text-[var(--accent)]" />
             <span className="hidden sm:inline">Экран игроков</span>
           </button>
 
@@ -1458,10 +1613,10 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           <button
             id="btn-upload-map"
             onClick={() => fileInputRef.current?.click()}
-            className="px-2.5 py-1 bg-[#2A2A2A] hover:bg-[#3A3A3A] text-[#E0E0E0] border border-[#444] text-[11px] rounded uppercase transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="btn btn-accent"
             title="Загрузить свою карту с диска (JPG, PNG, WebP, MP4)"
           >
-            <Upload className="w-3.5 h-3.5 text-[#FF4E00]" />
+            <Upload className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Загрузить</span>
           </button>
 
@@ -1471,8 +1626,8 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
             accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
             className="hidden"
             onChange={(e) => {
-              if (e.target.files && e.target.files[0]) {
-                handleFileUpload(e.target.files[0]);
+              if (e.target.files && e.target.files.length > 0) {
+                handleFilesDrop(e.target.files);
               }
             }}
           />
@@ -1481,24 +1636,23 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
       {/* 2. Основная рабочая область: Боковая панель + Вьюпорт */}
       <main className="flex flex-1 overflow-hidden relative">
-        {/* Боковая панель инструментов Мастера */}
+        {/* Боковая панель инструментов Мастера (Variation 5) */}
         <aside
           id="dm-sidebar"
-          className="w-72 md:w-80 border-r border-[#2A2A2A] bg-[#121212] flex flex-col justify-between overflow-y-auto flex-shrink-0 z-20"
+          className="w-[320px] border-r border-[var(--ink-faint)] bg-[var(--bg)] flex flex-col justify-between overflow-y-auto flex-shrink-0 z-20"
         >
-          <div className="p-3.5 space-y-4">
-            {/* Секция 0: Контроль вида игроков и рамка (Player Viewport Controls) */}
-            <section className="bg-[#111722] border border-[#233554] rounded-lg p-2.5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-[#38bdf8] font-bold uppercase tracking-wider flex items-center gap-1">
-                  <Tv className="w-3.5 h-3.5" />
-                  <span>Вид игроков (Проектор)</span>
-                </span>
+          <div className="flex flex-col">
+            {/* Секция 01: Вид игроков */}
+            <div className="section-card">
+              <div className="section-title">
+                <span className="label-mono" style={{ color: '#38bdf8' }}>[01] Вид игроков</span>
                 <button
                   onClick={() => setShowPlayerFrustum(!showPlayerFrustum)}
-                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase transition ${
-                    showPlayerFrustum ? 'bg-[#38bdf8] text-[#0f172a]' : 'bg-[#1e293b] text-[#64748b]'
-                  }`}
+                  className="label-mono px-1 py-0.5 rounded-sm transition cursor-pointer"
+                  style={{
+                    background: showPlayerFrustum ? '#38bdf8' : 'var(--surface)',
+                    color: showPlayerFrustum ? '#000' : 'var(--ink-muted)',
+                  }}
                   title="Включить / отключить рамку обзора игроков на столе мастера"
                 >
                   {showPlayerFrustum ? 'Рамка: ВКЛ' : 'Рамка: ВЫКЛ'}
@@ -1507,7 +1661,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
               {/* Статус разрешения проектора */}
               {playerViewportInfo && (
-                <div className="text-[9px] text-[#94a3b8] flex items-center justify-between font-mono bg-[#090d16] px-2 py-1 rounded border border-[#1e293b]">
+                <div className="text-[9px] text-[#94a3b8] flex items-center justify-between font-mono bg-[#090d16] px-2 py-1 rounded-sm border border-[var(--ink-faint)] mb-2">
                   <span>Экран: {playerViewportInfo.windowWidth}×{playerViewportInfo.windowHeight}px</span>
                   <span className="text-[#38bdf8]">
                     Зум: {Math.round(playerViewportInfo.viewport.scale * 100)}%
@@ -1516,104 +1670,97 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               )}
 
               {/* Кнопки управления синхронизацией камеры */}
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid-2">
                 <button
                   id="btn-push-view-to-player"
                   onClick={handlePushViewToPlayer}
-                  className="px-2 py-1.5 bg-[#0284c7]/20 hover:bg-[#0284c7]/40 border border-[#0284c7]/60 text-[#38bdf8] hover:text-white text-[10px] font-bold rounded flex items-center justify-center gap-1 transition cursor-pointer"
+                  className="btn"
                   title="Центрировать экран игроков точно на вашей текущей области стола"
                 >
                   <Target className="w-3 h-3 text-[#38bdf8]" />
-                  <span>Сфокусировать игроков</span>
+                  <span>Сфокусировать</span>
                 </button>
 
                 <button
                   id="btn-fit-player-to-map"
                   onClick={handleFitPlayerToMap}
-                  className="px-2 py-1.5 bg-[#1e293b] hover:bg-[#334155] border border-[#475569] text-[#cbd5e1] text-[10px] rounded flex items-center justify-center gap-1 transition cursor-pointer"
+                  className="btn"
                   title="Подогнать всю карту целиком в окно игроков"
                 >
-                  <Maximize2 className="w-3 h-3 text-[#cbd5e1]" />
-                  <span>Всю карту игрокам</span>
+                  <Maximize2 className="w-3 h-3 text-[var(--ink-muted)]" />
+                  <span>Всю карту</span>
                 </button>
 
                 <button
                   id="btn-snap-dm-to-player"
                   onClick={handleSnapToPlayerView}
-                  className="px-2 py-1.5 bg-[#1e293b] hover:bg-[#334155] border border-[#475569] text-[#cbd5e1] text-[10px] rounded flex items-center justify-center gap-1 transition cursor-pointer"
+                  className="btn"
                   title="Переместить камеру мастера к текущему положению экрана игроков"
                 >
-                  <Crosshair className="w-3 h-3 text-[#cbd5e1]" />
+                  <Crosshair className="w-3 h-3 text-[var(--ink-muted)]" />
                   <span>К виду игроков</span>
                 </button>
 
                 <button
                   id="btn-sync-camera-toggle"
                   onClick={() => setSyncCameraWithPlayer(!syncCameraWithPlayer)}
-                  className={`px-2 py-1.5 border text-[10px] rounded flex items-center justify-center gap-1 transition cursor-pointer ${
-                    syncCameraWithPlayer
-                      ? 'bg-[#15342a] border-[#10b981] text-[#34d399] font-bold'
-                      : 'bg-[#1e293b] border-[#475569] text-[#94a3b8]'
-                  }`}
+                  className={`btn ${syncCameraWithPlayer ? 'btn-accent' : ''}`}
                   title="Автоматически двигать камеру игроков при панорамировании мастера"
                 >
                   <Radio className="w-3 h-3" />
                   <span>{syncCameraWithPlayer ? 'Авто-зум: ВКЛ' : 'Авто-зум: СВОБ'}</span>
                 </button>
               </div>
-            </section>
+            </div>
 
-            {/* Секция 0A: Быстрый запуск D&D 5e генераторов */}
-            <section className="bg-gradient-to-br from-red-950/40 via-neutral-900 to-amber-950/30 border border-red-800/40 rounded-lg p-2.5 space-y-2 shadow-lg">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <ScrollText className="w-3 h-3 text-amber-400" />
-                  <span>D&D 5e Генераторы & Карточки</span>
-                </span>
-                <span className="text-[9px] text-amber-400/80 font-mono">8 модулей</span>
+            {/* Секция 02: Генераторы 5E */}
+            <div className="section-card">
+              <div className="section-title">
+                <span className="label-mono" style={{ color: 'var(--accent)' }}>[02] Генераторы 5E</span>
+                <span className="label-mono">8 модулей</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid-2 mb-2">
                 <button
                   id="btn-sidebar-gen-bestiary"
                   onClick={() => handleOpenDndSuite('bestiary')}
-                  className="px-2 py-1.5 bg-[#1f1616] hover:bg-[#2e1d1d] border border-red-600/40 hover:border-red-500 text-red-200 text-[10px] rounded flex items-center gap-1.5 transition cursor-pointer"
+                  className="btn"
                 >
                   <Skull className="w-3 h-3 text-red-400" />
-                  <span>Бестиарий CR</span>
+                  <span>Бестиарий</span>
                 </button>
 
                 <button
                   id="btn-sidebar-gen-npc"
                   onClick={() => handleOpenDndSuite('npc')}
-                  className="px-2 py-1.5 bg-[#171b26] hover:bg-[#20273a] border border-blue-600/40 hover:border-blue-500 text-blue-200 text-[10px] rounded flex items-center gap-1.5 transition cursor-pointer"
+                  className="btn"
                 >
                   <Users className="w-3 h-3 text-blue-400" />
-                  <span>NPC & Соц.</span>
+                  <span>NPC</span>
                 </button>
 
                 <button
                   id="btn-sidebar-gen-loot"
                   onClick={() => handleOpenDndSuite('loot')}
-                  className="px-2 py-1.5 bg-[#251f14] hover:bg-[#382e1b] border border-amber-600/40 hover:border-amber-500 text-amber-200 text-[10px] rounded flex items-center gap-1.5 transition cursor-pointer"
+                  className="btn"
                 >
                   <Coins className="w-3 h-3 text-amber-400" />
-                  <span>Лут & Клады</span>
+                  <span>Лут</span>
                 </button>
 
                 <button
                   id="btn-sidebar-gen-shops"
                   onClick={() => handleOpenDndSuite('stores')}
-                  className="px-2 py-1.5 bg-[#15241b] hover:bg-[#1c3325] border border-emerald-600/40 hover:border-emerald-500 text-emerald-200 text-[10px] rounded flex items-center gap-1.5 transition cursor-pointer"
+                  className="btn"
                 >
                   <Store className="w-3 h-3 text-emerald-400" />
-                  <span>Лавки & Торги</span>
+                  <span>Лавки</span>
                 </button>
 
                 <button
                   id="btn-sidebar-gen-equip"
                   onClick={() => handleOpenDndSuite('equipment')}
-                  className="px-2 py-1.5 bg-[#201726] hover:bg-[#2d1e38] border border-purple-600/40 hover:border-purple-500 text-purple-200 text-[10px] rounded flex items-center gap-1.5 transition cursor-pointer"
+                  className="btn"
                 >
                   <Sword className="w-3 h-3 text-purple-400" />
                   <span>Экипировка</span>
@@ -1622,148 +1769,110 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
                 <button
                   id="btn-sidebar-gen-magic"
                   onClick={() => handleOpenDndSuite('magic')}
-                  className="px-2 py-1.5 bg-[#142327] hover:bg-[#1a333a] border border-cyan-600/40 hover:border-cyan-500 text-cyan-200 text-[10px] rounded flex items-center gap-1.5 transition cursor-pointer"
+                  className="btn"
                 >
                   <Wand2 className="w-3 h-3 text-cyan-400" />
-                  <span>Магия & Свитки</span>
-                </button>
-
-                <button
-                  id="btn-sidebar-gen-ref"
-                  onClick={() => handleOpenDndSuite('reference')}
-                  className="col-span-2 px-2 py-1.5 bg-[#24211a] hover:bg-[#363124] border border-amber-500/50 hover:border-amber-400 text-amber-300 text-[10px] rounded flex items-center justify-center gap-1.5 transition cursor-pointer font-semibold"
-                >
-                  <BookOpen className="w-3 h-3 text-amber-400" />
-                  <span>Справочник правил, состояний & Таблица CR</span>
+                  <span>Магия</span>
                 </button>
               </div>
-            </section>
 
-            {/* Секция 0B: Библиотека карт & Пресеты */}
-            <section className="bg-[#181818] border border-[#333] rounded-lg p-2.5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <MapIcon className="w-3 h-3" />
-                  <span>Библиотека & Пресеты</span>
-                </span>
-                <button
-                  onClick={() => setIsMapLibraryOpen(true)}
-                  className="text-[9px] text-[#38bdf8] hover:underline font-bold"
-                >
-                  Все ({mapLocations.length})
-                </button>
+              <button
+                id="btn-sidebar-gen-ref"
+                onClick={() => handleOpenDndSuite('reference')}
+                className="btn w-full"
+              >
+                <BookOpen className="w-3 h-3 text-amber-400" />
+                <span>Справочник правил & CR</span>
+              </button>
+            </div>
+
+            {/* Секция 03: Библиотека */}
+            <div className="section-card">
+              <div className="section-title">
+                <span className="label-mono">[03] Библиотека</span>
+                <span className="label-mono">{mapLocations.length} карт</span>
               </div>
 
               {/* Список пресетов карт */}
-              <div className="space-y-1 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
-                {mapLocations.slice(0, 8).map((loc) => {
+              <div className="preset-list">
+                {mapLocations.slice(0, 6).map((loc) => {
                   const isActive = loc.id === activeLocationId;
                   return (
-                    <button
+                    <div
                       key={loc.id}
                       id={`btn-loc-${loc.id}`}
                       onClick={() => handleSelectMapLocation(loc)}
-                      className={`w-full text-left px-2 py-1.5 rounded text-[10px] transition flex items-center justify-between cursor-pointer ${
-                        isActive
-                          ? 'bg-[#2a2318] border border-[#ff4e00] text-[#ff4e00] font-bold shadow-sm'
-                          : 'bg-[#1a1a1a] hover:bg-[#252525] text-[#94a3b8] hover:text-[#e2e8f0] border border-[#262626]'
-                      }`}
+                      className={`preset-item ${isActive ? 'active' : ''}`}
                     >
-                      <span className="truncate max-w-[150px]">{loc.name}</span>
-                      <div className="flex items-center gap-1">
-                        {loc.visited && (
-                          <span className="text-[8px] px-1 py-0.2 rounded bg-sky-950 text-sky-400 font-normal">
-                            сыграна
-                          </span>
-                        )}
-                        <span className="text-[8px] text-[#666] px-1 py-0.2 rounded bg-[#0A0A0A]">
-                          {loc.category}
-                        </span>
-                      </div>
-                    </button>
+                      <span className="truncate max-w-[170px]">{loc.name}</span>
+                      <span className="label-mono">
+                        {isActive ? 'Cur' : loc.category.slice(0, 3)}
+                      </span>
+                    </div>
                   );
                 })}
               </div>
 
               <button
                 onClick={() => setIsMapLibraryOpen(true)}
-                className="w-full py-1.5 bg-[#222938] hover:bg-[#2c374d] text-white text-[10px] font-bold rounded flex items-center justify-center gap-1 transition cursor-pointer"
+                className="btn w-full"
               >
                 <FolderOpen className="w-3 h-3 text-[#38bdf8]" />
-                <span>Открыть Библиотеку Карт (L)</span>
+                <span>Библиотека Карт (L)</span>
               </button>
-            </section>
+            </div>
 
-            {/* Секция 1: Инструменты Тумана Войны */}
-            <section>
-              <h3 className="text-[10px] text-[#888] font-bold uppercase mb-2.5 tracking-widest border-b border-[#2A2A2A] pb-1 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <Layers className="w-3 h-3 text-[#FF4E00]" />
-                  <span>Туман войны (Fog of War)</span>
-                </span>
-                <span className="text-[9px] text-[#555]">R / H / M / P</span>
-              </h3>
+            {/* Секция 04: Туман войны */}
+            <div className="section-card">
+              <div className="section-title">
+                <span className="label-mono">[04] Туман войны</span>
+                <span className="label-mono">R/H/M/P</span>
+              </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid-2">
                 <button
                   id="tool-reveal"
                   onClick={() => setBrushMode('reveal')}
-                  className={`p-2 rounded text-[10px] flex flex-col items-center gap-1 uppercase transition-colors cursor-pointer ${
-                    brushMode === 'reveal'
-                      ? 'bg-[#2A2A2A] border border-[#FF4E00] text-[#FF4E00]'
-                      : 'bg-[#1A1A1A] border border-[#333] text-[#888] hover:bg-[#252525] hover:text-[#E0E0E0]'
-                  }`}
+                  className={`btn ${brushMode === 'reveal' ? 'btn-accent' : ''}`}
                 >
-                  <Eye className="w-4 h-4" />
-                  <span>ОТКРЫТЬ (R)</span>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Открыть (R)</span>
                 </button>
 
                 <button
                   id="tool-hide"
                   onClick={() => setBrushMode('hide')}
-                  className={`p-2 rounded text-[10px] flex flex-col items-center gap-1 uppercase transition-colors cursor-pointer ${
-                    brushMode === 'hide'
-                      ? 'bg-[#2A2A2A] border border-[#FF4E00] text-[#FF4E00]'
-                      : 'bg-[#1A1A1A] border border-[#333] text-[#888] hover:bg-[#252525] hover:text-[#E0E0E0]'
-                  }`}
+                  className={`btn ${brushMode === 'hide' ? 'btn-accent' : ''}`}
                 >
-                  <EyeOff className="w-4 h-4" />
-                  <span>СКРЫТЬ (H)</span>
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Скрыть (H)</span>
                 </button>
 
                 <button
                   id="tool-measure"
                   onClick={() => setBrushMode('measure')}
-                  className={`p-2 rounded text-[10px] flex flex-col items-center gap-1 uppercase transition-colors cursor-pointer ${
-                    brushMode === 'measure'
-                      ? 'bg-[#2A2A2A] border border-[#FF4E00] text-[#FF4E00]'
-                      : 'bg-[#1A1A1A] border border-[#333] text-[#888] hover:bg-[#252525] hover:text-[#E0E0E0]'
-                  }`}
+                  className={`btn ${brushMode === 'measure' ? 'btn-accent' : ''}`}
                 >
-                  <Ruler className="w-4 h-4" />
-                  <span>ЛИНЕЙКА (M)</span>
+                  <Ruler className="w-3.5 h-3.5" />
+                  <span>Линейка (M)</span>
                 </button>
 
                 <button
                   id="tool-pan"
                   onClick={() => setBrushMode('pan')}
-                  className={`p-2 rounded text-[10px] flex flex-col items-center gap-1 uppercase transition-colors cursor-pointer ${
-                    brushMode === 'pan'
-                      ? 'bg-[#2A2A2A] border border-[#FF4E00] text-[#FF4E00]'
-                      : 'bg-[#1A1A1A] border border-[#333] text-[#888] hover:bg-[#252525] hover:text-[#E0E0E0]'
-                  }`}
+                  className={`btn ${brushMode === 'pan' ? 'btn-accent' : ''}`}
                 >
-                  <Move className="w-4 h-4" />
-                  <span>РУКА (P)</span>
+                  <Move className="w-3.5 h-3.5" />
+                  <span>Рука (P)</span>
                 </button>
               </div>
 
               {/* Ползунки кисти и прозрачности */}
-              <div className="mt-3.5 space-y-3">
+              <div className="mt-3 space-y-2">
                 <div>
-                  <div className="flex justify-between text-[9px] text-[#888] mb-1 uppercase">
-                    <span>РАЗМЕР КИСТИ</span>
-                    <span className="text-[#FF4E00] font-bold">{brushSize}px</span>
+                  <div className="flex justify-between label-mono mb-1">
+                    <span>Кисть</span>
+                    <span style={{ color: 'var(--accent)' }}>{brushSize}px</span>
                   </div>
                   <input
                     id="slider-brush-size"
@@ -1773,14 +1882,14 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
                     step="5"
                     value={brushSize}
                     onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
-                    className="w-full h-1.5 bg-[#2A2A2A] rounded-full appearance-none cursor-pointer"
+                    className="input-range"
                   />
                 </div>
 
                 <div>
-                  <div className="flex justify-between text-[9px] text-[#888] mb-1 uppercase">
-                    <span>ПРОЗРАЧНОСТЬ ТУМАНА ДЛЯ МАСТЕРА</span>
-                    <span className="text-[#E0E0E0]">{Math.round(dmFogOpacity * 100)}%</span>
+                  <div className="flex justify-between label-mono mb-1">
+                    <span>Прозрачность (DM)</span>
+                    <span>{Math.round(dmFogOpacity * 100)}%</span>
                   </div>
                   <input
                     id="slider-dm-fog-opacity"
@@ -1790,57 +1899,50 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
                     step="0.05"
                     value={dmFogOpacity}
                     onChange={(e) => setDmFogOpacity(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-[#2A2A2A] rounded-full appearance-none cursor-pointer"
+                    className="input-range"
                   />
-                  <span className="text-[8px] text-[#64748b] block mt-0.5 uppercase">
-                    *ИГРОКИ ВСЕГДА ВИДЯТ 100% НЕПРОЗРАЧНЫЙ ЧЕРНЫЙ ТУМАН
-                  </span>
                 </div>
               </div>
 
               {/* Глобальные действия тумана */}
-              <div className="grid grid-cols-2 gap-2 mt-3">
+              <div className="grid-2 mt-2">
                 <button
                   id="btn-fog-fill-all"
                   onClick={handleFogFillAll}
-                  className="w-full py-1.5 text-[10px] bg-[#1A1A1A] border border-[#333] hover:bg-[#252525] hover:border-[#555] text-[#E0E0E0] uppercase transition-colors rounded cursor-pointer"
+                  className="btn"
                 >
-                  СКРЫТЬ ВСЁ
+                  Скрыть всё
                 </button>
                 <button
                   id="btn-fog-clear-all"
                   onClick={handleFogClearAll}
-                  className="w-full py-1.5 text-[10px] bg-[#1A1A1A] border border-[#333] hover:bg-[#252525] hover:border-[#555] text-[#E0E0E0] uppercase transition-colors rounded cursor-pointer"
+                  className="btn"
                 >
-                  ОТКРЫТЬ ВСЁ
+                  Открыть всё
                 </button>
               </div>
-            </section>
+            </div>
 
-            {/* Секция 2: Настройки Сетки */}
-            <section>
-              <h3 className="text-[10px] text-[#888] font-bold uppercase mb-2.5 tracking-widest border-b border-[#2A2A2A] pb-1 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <Grid className="w-3 h-3 text-[#FF4E00]" />
-                  <span>Тактическая Сетка</span>
-                </span>
+            {/* Секция 05: Сетка & Экспорт */}
+            <div className="section-card" style={{ borderBottom: 'none' }}>
+              <div className="section-title">
+                <span className="label-mono">[05] Сетка</span>
                 <button
                   id="btn-toggle-grid"
                   onClick={() => updateGrid({ enabled: !grid.enabled })}
-                  className={`px-2 py-0.5 text-[9px] rounded font-bold uppercase transition cursor-pointer ${
-                    grid.enabled ? 'bg-[#FF4E00] text-black' : 'bg-[#2A2A2A] text-[#888]'
-                  }`}
+                  className={`btn ${grid.enabled ? 'btn-accent' : ''}`}
+                  style={{ height: '18px', padding: '0 6px', fontSize: '8px' }}
                 >
                   {grid.enabled ? 'ВКЛ' : 'ВЫКЛ'}
                 </button>
-              </h3>
+              </div>
 
               {grid.enabled && (
-                <div className="space-y-3">
+                <div className="space-y-2 mb-2">
                   <div>
-                    <div className="flex justify-between text-[9px] text-[#888] mb-1 uppercase">
-                      <span>РАЗМЕР КЛЕТКИ</span>
-                      <span className="text-[#E0E0E0]">{grid.size}px</span>
+                    <div className="flex justify-between label-mono mb-1">
+                      <span>Клетка</span>
+                      <span>{grid.size}px</span>
                     </div>
                     <input
                       id="slider-grid-size"
@@ -1850,49 +1952,22 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
                       step="2"
                       value={grid.size}
                       onChange={(e) => updateGrid({ size: parseInt(e.target.value, 10) })}
-                      className="w-full h-1.5 bg-[#2A2A2A] rounded-full appearance-none cursor-pointer"
+                      className="input-range"
                     />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[9px] text-[#888] uppercase">
-                    <span>ЦВЕТ СЕТКИ</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={grid.color}
-                        onChange={(e) => updateGrid({ color: e.target.value })}
-                        className="w-5 h-5 rounded border border-[#333] bg-transparent cursor-pointer"
-                      />
-                      <button
-                        onClick={() => updateGrid({ color: '#ffffff' })}
-                        className="text-[9px] px-1.5 py-0.5 bg-[#1A1A1A] border border-[#333] rounded hover:bg-[#2A2A2A] text-[#E0E0E0]"
-                      >
-                        БЕЛ
-                      </button>
-                      <button
-                        onClick={() => updateGrid({ color: '#000000' })}
-                        className="text-[9px] px-1.5 py-0.5 bg-[#1A1A1A] border border-[#333] rounded hover:bg-[#2A2A2A] text-[#E0E0E0]"
-                      >
-                        ЧЕРН
-                      </button>
-                    </div>
                   </div>
                 </div>
               )}
-            </section>
-          </div>
 
-          {/* Нижний блок боковой панели */}
-          <div className="p-3 border-t border-[#2A2A2A] bg-[#0F0F0F] space-y-2">
-            <button
-              id="btn-download-standalone"
-              onClick={handleDownloadStandalone}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-[#1A1A1A] hover:bg-[#252525] border border-[#333] text-[10px] font-bold text-[#E0E0E0] uppercase rounded transition cursor-pointer"
-              title="Скачать один автономный HTML-файл для игры без интернета"
-            >
-              <Download className="w-3.5 h-3.5 text-[#FF4E00]" />
-              <span>Скачать Offline HTML</span>
-            </button>
+              <button
+                id="btn-download-standalone"
+                onClick={handleDownloadStandalone}
+                className="btn w-full mt-1"
+                title="Скачать один автономный HTML-файл для игры без интернета"
+              >
+                <Download className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span>Скачать Offline HTML</span>
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -1900,28 +1975,75 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         <section
           id="dm-viewport-container"
           ref={containerRef}
-          className="flex-1 relative bg-[#080808] cursor-crosshair overflow-hidden"
+          className="flex-1 relative bg-[#050505] cursor-crosshair overflow-hidden"
           style={{
-            backgroundImage: 'radial-gradient(#1a1a1a 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(var(--ink-faint) 1px, transparent 1px)',
             backgroundSize: '20px 20px',
           }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onWheel={handleWheel}
-          onDragOver={(e) => e.preventDefault()}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            setIsDraggingOverTable(true);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer) {
+              e.dataTransfer.dropEffect = 'copy';
+            }
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+          }}
           onDrop={(e) => {
             e.preventDefault();
-            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-              handleFileUpload(e.dataTransfer.files[0]);
+            setIsDraggingOverTable(false);
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              handleFilesDrop(e.dataTransfer.files);
             }
           }}
         >
+          {/* Индикатор Drag & Drop карты непосредственно на стол */}
+          {isDraggingOverTable && (
+            <div
+              id="dm-drag-drop-overlay"
+              className="absolute inset-0 z-50 flex items-center justify-center p-6 bg-[#04060ab3] backdrop-blur-sm pointer-events-none transition-all duration-200"
+            >
+              <div className="relative max-w-xl w-full p-8 rounded-2xl border-2 border-dashed border-amber-400/90 bg-[#0c1018]/95 shadow-[0_0_50px_rgba(245,158,11,0.25)] flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-150">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-amber-600/30 to-amber-400/20 border border-amber-500/50 flex items-center justify-center mb-4 shadow-inner">
+                  <Upload className="w-8 h-8 text-amber-400 animate-bounce" />
+                </div>
+                
+                <h3 className="text-xl font-bold text-white tracking-wide mb-2 flex items-center gap-2">
+                  <span>Отпустите карту для загрузки на стол</span>
+                </h3>
+                
+                <p className="text-sm text-slate-300 mb-5 max-w-md leading-relaxed">
+                  Файл будет мгновенно установлен в качестве активной карты и автоматически отобразится у игроков на экране проектора без лишних настроек.
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+                  <span className="px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 font-mono font-bold">
+                    PNG / JPG / WebP / GIF
+                  </span>
+                  <span className="px-2.5 py-1 rounded bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 font-mono font-bold">
+                    MP4 / WebM (Живая карта)
+                  </span>
+                  <span className="px-2.5 py-1 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono flex items-center gap-1 font-bold">
+                    <Zap className="w-3 h-3 text-emerald-400" />
+                    Мгновенная синхронизация
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Плашка переключения этажей (если загружен многоэтажный объект) */}
           {multiFloorGroup && multiFloorGroup.floors.length > 1 && (
             <div
               id="multi-floor-bar"
-              className="absolute top-3 left-1/2 transform -translate-x-1/2 z-30 flex items-center gap-1 bg-[#12141a]/95 border border-amber-500/60 rounded-xl p-1 shadow-2xl "
+              className="absolute top-3 left-1/2 transform -translate-x-1/2 z-30 flex items-center gap-1 bg-[#12141a]/95 border border-amber-500/60 rounded-sm p-1 shadow-2xl"
             >
               <div className="px-2 py-0.5 text-[10px] text-amber-400 font-bold uppercase flex items-center gap-1 border-r border-slate-700 mr-1">
                 <Layers className="w-3 h-3" />
@@ -1935,11 +2057,8 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
                     key={floor.id}
                     id={`btn-floor-${floor.floorIndex}`}
                     onClick={() => handleSwitchFloor(floor.floorIndex)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-amber-600 text-slate-950 shadow-md'
-                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300'
-                    }`}
+                    className={`btn ${isActive ? 'btn-accent' : ''}`}
+                    style={{ height: '24px', padding: '0 8px', fontSize: '10px' }}
                     title={floor.floorTitle || floor.name}
                   >
                     {floor.floorLabel || `${floor.floorIndex}F`}
@@ -1949,45 +2068,39 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
             </div>
           )}
 
-          {/* Индикатор статуса / подсказки сверху слева */}
-          <div className="absolute top-3 left-4 z-20 flex items-center gap-2 pointer-events-none">
-            <div className="px-3 py-1 bg-[#121212]/90 border border-[#2A2A2A] rounded text-[10px] text-[#888] flex items-center gap-2 uppercase">
-              <span className="font-bold text-[#FF4E00] truncate max-w-[180px]">{media.name}</span>
-              <span className="text-[#555]">|</span>
-              <span>
-                {media.width}×{media.height}PX
-              </span>
-              <span className="text-[#555]">|</span>
-              <span className="text-[#E0E0E0]">ZOOM: {Math.round(viewport.scale * 100)}%</span>
-            </div>
-
+          {/* Индикатор статуса карты сверху слева (Variation 5) */}
+          <div className="map-ui-top pointer-events-none">
+            <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{media.name}</span>
+            <span className="mx-1.5 text-[var(--ink-muted)]">|</span>
+            <span>{media.width}×{media.height}PX</span>
+            <span className="mx-1.5 text-[var(--ink-muted)]">|</span>
+            <span>ZOOM: {Math.round(viewport.scale * 100)}%</span>
             {measurement.active && (
-              <div className="px-3 py-1 bg-black/90 border border-[#FF4E00] rounded text-[10px] text-white font-mono uppercase">
-                ДИСТАНЦИЯ: <strong className="text-[#FF4E00]">{distanceFeet} FT</strong> ({distanceCells} КЛЕТОК /{' '}
-                {Math.round(distancePx)} PX)
-              </div>
+              <span className="ml-2 font-mono text-[var(--accent)]">
+                [DIST: {distanceFeet}FT / {distanceCells}C]
+              </span>
             )}
           </div>
 
-          {/* Плавающая панель управления зумом на вьюпорте */}
-          <div className="absolute top-4 right-4 flex flex-col gap-1 z-20">
+          {/* Плавающая панель управления зумом на вьюпорте (Variation 5) */}
+          <div className="map-controls-floating">
             <button
               onClick={handleZoomIn}
-              className="w-8 h-8 bg-black/80 border border-[#333] hover:border-[#FF4E00] text-[#E0E0E0] hover:text-[#FF4E00] flex items-center justify-center text-xs font-bold transition rounded cursor-pointer"
+              className="btn btn-icon"
               title="Приблизить (+)"
             >
               +
             </button>
             <button
               onClick={handleZoomOut}
-              className="w-8 h-8 bg-black/80 border border-[#333] hover:border-[#FF4E00] text-[#E0E0E0] hover:text-[#FF4E00] flex items-center justify-center text-xs font-bold transition rounded cursor-pointer"
+              className="btn btn-icon"
               title="Отдалить (-)"
             >
               -
             </button>
             <button
               onClick={() => fitMapToScreen()}
-              className="w-8 h-8 bg-black/80 border border-[#333] hover:border-[#FF4E00] text-[#E0E0E0] hover:text-[#FF4E00] flex items-center justify-center text-xs font-bold transition rounded cursor-pointer"
+              className="btn btn-icon"
               title="Сбросить масштаб (Подогнать)"
             >
               ⟲
@@ -2360,6 +2473,16 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           loadMediaUrl(url, 'image', name, 1920, 1080);
           showToast(`ИИ-Арт активирован на столе: ${name}`);
         }}
+      />
+      {/* 10. D&D Audio Player & Soundboard */}
+      <AudioMiniPlayer
+        onOpenFullPlayer={() => setIsAudioPlayerOpen(true)}
+        showToast={showToast}
+      />
+      <AudioPlayerModal
+        isOpen={isAudioPlayerOpen}
+        onClose={() => setIsAudioPlayerOpen(false)}
+        showToast={showToast}
       />
     </div>
   );

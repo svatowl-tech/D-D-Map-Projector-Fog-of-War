@@ -1,14 +1,62 @@
-import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import path from 'path';
 
-// Helper to initialize Gemini SDK safely on the server side
-export function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+// Polza AI Chat Completions helper
+export interface PolzaChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface PolzaChatOptions {
+  model?: string;
+  messages: PolzaChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export async function callPolzaChatCompletions(options: PolzaChatOptions): Promise<{ text: string; reasoning?: string }> {
+  const apiKey = process.env.POLZA_API_KEY || process.env.NEXT_PUBLIC_POLZA_API_KEY;
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is required');
+    throw new Error('POLZA_API_KEY не настроен. Пожалуйста, укажите ваш ключ Polza AI в настройках проекта.');
   }
-  return new GoogleGenAI({ apiKey });
+
+  const model = options.model || 'deepseek/deepseek-r1-distill-llama-70b';
+  const temperature = options.temperature ?? 0.7;
+
+  const res = await fetch('https://api.polza.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: options.messages,
+      temperature,
+      max_tokens: options.max_tokens,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Ошибка Polza AI API (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const choice = data.choices?.[0];
+  const message = choice?.message;
+
+  let text = message?.content || '';
+  let reasoning = message?.reasoning_content || '';
+
+  // Если модель вернула блок мышления в виде тегов <think> внутри content
+  const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
+  if (thinkMatch) {
+    reasoning = reasoning ? `${reasoning}\n${thinkMatch[1].trim()}` : thinkMatch[1].trim();
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  }
+
+  return { text, reasoning };
 }
 
 // Directory helpers

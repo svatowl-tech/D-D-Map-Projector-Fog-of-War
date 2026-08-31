@@ -8,7 +8,7 @@ export type AppMode = 'dm' | 'player';
 
 export type BrushMode = 'reveal' | 'hide' | 'pan' | 'ping' | 'measure';
 
-export type GeneratorType = 'cave' | 'city' | 'dwell' | 'taverns' | 'village';
+export type GeneratorType = 'dungeon' | 'cave' | 'city' | 'dwell' | 'taverns' | 'village' | 'battlemap';
 
 export interface ViewportTransform {
   x: number;

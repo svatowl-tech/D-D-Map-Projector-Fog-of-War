@@ -54,19 +54,17 @@ function AppContent() {
         <DMView onOpenPlayerWindow={handleOpenPlayerWindow} />
       )}
 
-      {/* Быстрый плавающий переключатель режима (для удобства в iFrame preview) */}
-      <div
-        id="mode-quick-toggle"
-        className="fixed bottom-3 right-3 z-50 flex items-center gap-1 bg-slate-900/90 backdrop-blur border border-slate-800 rounded-lg p-1 text-xs shadow-xl"
-      >
+      {/* Быстрый плавающий переключатель режима (Variation 5) */}
+      <div id="mode-quick-toggle" className="quick-toggle-bar">
         <button
           id="btn-mode-dm"
           onClick={() => setOverrideMode('dm')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer ${
+          className={`btn ${
             currentMode === 'dm'
-              ? 'bg-amber-600 text-slate-950 font-bold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              ? 'btn-accent'
+              : 'border-transparent bg-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]'
           }`}
+          style={{ height: '28px' }}
         >
           <Shield className="w-3.5 h-3.5" />
           <span>Мастер (DM)</span>
@@ -75,11 +73,12 @@ function AppContent() {
         <button
           id="btn-mode-player"
           onClick={() => setOverrideMode('player')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer ${
+          className={`btn ${
             currentMode === 'player'
-              ? 'bg-amber-600 text-slate-950 font-bold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              ? 'btn-accent'
+              : 'border-transparent bg-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]'
           }`}
+          style={{ height: '28px' }}
         >
           <Monitor className="w-3.5 h-3.5" />
           <span>Игроки (Проектор)</span>

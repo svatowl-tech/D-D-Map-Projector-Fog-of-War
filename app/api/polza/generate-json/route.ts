@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getGeminiClient, saveJsonToDisk, compileArtPrompt } from '@/lib/aiEngineHelper';
+import { callPolzaChatCompletions, saveJsonToDisk, compileArtPrompt } from '@/lib/aiEngineHelper';
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   "xp": 450,
   "stats": { "str": 16, "dex": 14, "con": 16, "int": 10, "wis": 12, "cha": 8 },
   "savingThrows": "Спасброски (например: Сил +5, Тел +5)",
-  "skills": "Навки (например: Внимательность +3, Скрытность +4)",
+  "skills": "Навыки (например: Внимательность +3, Скрытность +4)",
   "damageResistances": "Сопротивление урону (например: Огонь, Холод)",
   "damageImmunities": "Иммунитет к урону",
   "conditionImmunities": "Иммунитет к состояниям (Испуг, Очарование)",
@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
   "checkFormulas": "Проверка Мудрости (Внимательность) против КС 15",
   "triggers": "Срабатывает при входе в зоны хаоса или при падении хитов ниже 1/4",
   "multiStageEffects": [
-    { "stage": 1, "name": "Легкая тревога", "effect": "Помеха на проверки Нанимательности" },
+    { "stage": 1, "name": "Легкая тревога", "effect": "Помеха на проверки Внимательности" },
     { "stage": 2, "name": "Паника", "effect": "Персонаж обязан тратить действие на Бег" }
   ],
   "recovery": "Отдых в безопасном месте восстанавливает 1 стадию",
@@ -210,37 +210,28 @@ export async function POST(req: NextRequest) {
         break;
     }
 
-    // Call Gemini to generate JSON + reasoning <think>
-    const ai = getGeminiClient();
     const systemPrompt = `
-Ты — AI Engine для D&D 5e и d20 настольных систем.
+Ты — AI Engine на базе Polza AI для D&D 5e и d20 настольных систем.
 ВАЖНО:
-1. В начале ответа сформируй блок рассуждений в тегах <think>...</think> (логика балансировки, распределение статов и нюансы механик D&D 5e).
-2. После блока </think> выведи СТРОГО чистый JSON сущности без лишних оберток и словесного текста.
+1. Если модель поддерживает рассуждения, сформируй блок рассуждений в тегах <think>...</think> (логика балансировки, распределение статов и нюансы механик D&D 5e).
+2. Выведи СТРОГО чистый JSON сущности без лишних markdown оберток и постороннего вводного текста.
 `;
 
-    const fullPrompt = `${systemPrompt}\n\n${promptInstructions}\n\nПользовательский запрос: ${userPrompt}`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: fullPrompt,
-      config: {
-        temperature,
-      },
+    // Вызов Polza AI API
+    const polzaResponse = await callPolzaChatCompletions({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${promptInstructions}\n\nПользовательский запрос: ${userPrompt}` },
+      ],
+      temperature,
     });
 
-    const rawText = response.text || '';
+    let jsonString = polzaResponse.text || '';
+    let reasoning = polzaResponse.reasoning || '';
 
-    // Extract reasoning <think> block
-    let reasoning = '';
-    let jsonString = rawText;
-
-    const thinkMatch = rawText.match(/<think>([\s\u0000-\uFFFF]*?)<\/think>/i);
-    if (thinkMatch) {
-      reasoning = thinkMatch[1].trim();
-      jsonString = rawText.replace(/<think>[\s\u0000-\uFFFF]*?<\/think>/gi, '').trim();
-    } else {
-      reasoning = `Анализ запроса: "${userPrompt}". Применена математика и баланс D&D 5e для типа ${entityType}.`;
+    if (!reasoning) {
+      reasoning = `Анализ запроса: "${userPrompt}". Применена математика и баланс D&D 5e для типа ${entityType} через Polza AI (${model}).`;
     }
 
     // Clean JSON markdown code blocks
@@ -249,8 +240,19 @@ export async function POST(req: NextRequest) {
     let jsonData: any = {};
     try {
       jsonData = JSON.parse(jsonString);
-    } catch (e) {
-      jsonData = { rawText: jsonString, parseError: true };
+    } catch {
+      // Пытаемся извлечь JSON подстроку
+      const firstBrace = jsonString.indexOf('{');
+      const lastBrace = jsonString.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        try {
+          jsonData = JSON.parse(jsonString.substring(firstBrace, lastBrace + 1));
+        } catch {
+          jsonData = { rawText: jsonString, parseError: true };
+        }
+      } else {
+        jsonData = { rawText: jsonString, parseError: true };
+      }
     }
 
     // Compile auto image prompt
@@ -267,6 +269,7 @@ export async function POST(req: NextRequest) {
         jsonData,
         reasoning,
         imagePrompt,
+        model,
         createdAt: new Date().toISOString(),
       });
     }
@@ -281,7 +284,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     return NextResponse.json(
-      { success: false, error: error.message || 'Ошибка генерации JSON' },
+      { success: false, error: error.message || 'Ошибка генерации JSON через Polza AI' },
       { status: 500 }
     );
   }

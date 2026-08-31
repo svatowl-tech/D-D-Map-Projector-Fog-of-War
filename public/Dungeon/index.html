@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>One Page Dungeon Generator</title>
+	<meta id="viewport" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<meta name="mobile-web-app-capable" content="yes">
+	
+	<link rel="shortcut icon" type="image/png" href="./favicon.png">
+	
+	<script type="text/javascript" src="./Dungeon.js"></script>
+	
+	<script>
+		// PostMessage and SaveAs Interception Bridge for Tabletop Import
+		(function() {
+			var origSaveAs = null;
+			function customSaveAs(blob, filename, disableAutoBOM) {
+				var reader = new FileReader();
+				reader.onload = function(e) {
+					var dataUrl = e.target.result;
+					if (blob.type && blob.type.indexOf('image/png') !== -1) {
+						var img = new Image();
+						img.onload = function() {
+							var msg = {
+								type: 'DUNGEON_MAP_EXPORT',
+								generatorType: 'dungeon',
+								dataUrl: dataUrl,
+								filename: filename || 'One_Page_Dungeon.png',
+								width: img.naturalWidth || 1600,
+								height: img.naturalHeight || 1600,
+								format: 'png',
+								timestamp: Date.now()
+							};
+							if (window.parent && window.parent !== window) {
+								window.parent.postMessage(msg, '*');
+							}
+							if (window.top && window.top !== window && window.top !== window.parent) {
+								window.top.postMessage(msg, '*');
+							}
+						};
+						img.src = dataUrl;
+					} else {
+						var msg = {
+							type: 'DUNGEON_MAP_EXPORT',
+							generatorType: 'dungeon',
+							dataUrl: dataUrl,
+							filename: filename || 'One_Page_Dungeon',
+							format: blob.type || 'unknown',
+							timestamp: Date.now()
+						};
+						if (window.parent && window.parent !== window) {
+							window.parent.postMessage(msg, '*');
+						}
+						if (window.top && window.top !== window && window.top !== window.parent) {
+							window.top.postMessage(msg, '*');
+						}
+					}
+				};
+
+				if (blob.type && (blob.type.indexOf('json') !== -1 || blob.type.indexOf('text') !== -1)) {
+					reader.readAsText(blob);
+				} else {
+					reader.readAsDataURL(blob);
+				}
+
+				if (window.__triggerFileDownload && origSaveAs) {
+					origSaveAs(blob, filename, disableAutoBOM);
+				}
+			}
+
+			try {
+				Object.defineProperty(window, 'saveAs', {
+					get: function() { return customSaveAs; },
+					set: function(fn) { origSaveAs = fn; },
+					configurable: true
+				});
+			} catch(e) {
+				window.saveAs = customSaveAs;
+			}
+
+			function dispatchKey(code, shift) {
+				var eDown = new KeyboardEvent('keydown', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				var eUp = new KeyboardEvent('keyup', {
+					keyCode: code,
+					which: code,
+					shiftKey: !!shift,
+					bubbles: true,
+					cancelable: true
+				});
+				window.dispatchEvent(eDown);
+				document.dispatchEvent(eDown);
+				setTimeout(function() {
+					window.dispatchEvent(eUp);
+					document.dispatchEvent(eUp);
+				}, 40);
+			}
+
+			function findActiveScene() {
+				if (window.__dungeon_scene) return window.__dungeon_scene;
+				return null;
+			}
+
+			window.addEventListener('message', function(event) {
+				if (!event.data || !event.data.action) return;
+				var action = event.data.action;
+
+				if (action === 'EXPORT_PNG') {
+					window.__triggerFileDownload = !!event.data.download;
+					var sc = findActiveScene();
+					if (sc) {
+						dispatchKey(69); // E key
+					}
+				} else if (action === 'EXPORT_JSON') {
+					var sc = findActiveScene();
+					if (sc) {
+						dispatchKey(74); // J key
+					}
+				} else if (action === 'GENERATE' || action === 'NEW_DUNGEON') {
+					dispatchKey(13); // Enter key
+				} else if (action === 'TOGGLE_GRID') {
+					dispatchKey(71, false); // G
+				} else if (action === 'TOGGLE_NOTES') {
+					dispatchKey(78); // N
+				} else if (action === 'TOGGLE_PROPS') {
+					dispatchKey(80); // P
+				} else if (action === 'TOGGLE_BW') {
+					dispatchKey(77); // M
+				} else if (action === 'TOGGLE_SECRETS') {
+					dispatchKey(72); // H
+				} else if (action === 'TOGGLE_LEGEND') {
+					dispatchKey(76); // L
+				} else if (action === 'TOGGLE_WATER') {
+					dispatchKey(87, false); // W
+				} else if (action === 'RAISE_WATER') {
+					dispatchKey(87, true); // Shift + W
+				} else if (action === 'STYLE_PRESET') {
+					var preset = event.data.preset;
+					var sc = findActiveScene();
+					if (sc && typeof sc.stylePreset === 'function') {
+						sc.stylePreset(preset || 'default');
+					} else {
+						if (preset === 'ancient') dispatchKey(50);
+						else if (preset === 'light') dispatchKey(51);
+						else if (preset === 'modern') dispatchKey(52);
+						else if (preset === 'link') dispatchKey(53);
+						else dispatchKey(49);
+					}
+				}
+			});
+		})();
+
+		window.addEventListener ("touchmove", function (event) { event.preventDefault (); }, { capture: false, passive: false });
+		if (typeof window.devicePixelRatio != 'undefined' && window.devicePixelRatio > 2) {
+			var meta = document.getElementById ("viewport");
+			meta.setAttribute ('content', 'width=device-width, initial-scale=' + (2 / window.devicePixelRatio) + ', user-scalable=no');
+		}
+	</script>
+	
+	<style>
+		html,body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000000; }
+		#openfl-content { background: #000000; width: 100%; height: 100%; }
+		@font-face {
+			font-family: 'Pathway Gothic One Regular';
+			src: url('Assets/PathwayGothicOne-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/PathwayGothicOne-Regular.woff') format('woff'),
+			url('Assets/PathwayGothicOne-Regular.ttf') format('truetype'),
+			url('Assets/PathwayGothicOne-Regular.svg#Pathway%20Gothic%20One%20Regular') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Germania One';
+			src: url('Assets/GermaniaOne-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/GermaniaOne-Regular.woff') format('woff'),
+			url('Assets/GermaniaOne-Regular.ttf') format('truetype'),
+			url('Assets/GermaniaOne-Regular.svg#Germania%20One') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Regular';
+			src: url('Assets/ShareTech-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/ShareTech-Regular.woff') format('woff'),
+			url('Assets/ShareTech-Regular.ttf') format('truetype'),
+			url('Assets/ShareTech-Regular.svg#Share%20Tech%20Regular') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+		@font-face {
+			font-family: 'Share Tech Mono';
+			src: url('Assets/ShareTechMono-Regular.eot?#iefix') format('embedded-opentype'),
+			url('Assets/ShareTechMono-Regular.woff') format('woff'),
+			url('Assets/ShareTechMono-Regular.ttf') format('truetype'),
+			url('Assets/ShareTechMono-Regular.svg#Share%20Tech%20Mono') format('svg');
+			font-weight: normal;
+			font-style: normal;
+		}
+	</style>
+</head>
+<body>
+	<noscript>This webpage makes extensive use of JavaScript. Please enable JavaScript in your web browser to view this page.</noscript>
+	
+	<div id="openfl-content"></div>
+	
+	<script type="text/javascript">
+		lime.embed ("Dungeon", "openfl-content", 0, 0, { parameters: {} });
+	</script>
+</body>
+</html>

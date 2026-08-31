@@ -106,11 +106,13 @@ export function getActiveMapId(): string | null {
  */
 export function createLocationFromGenerator(data: GeneratorExportEventData): SavedMapLocation {
   const categoryMap: Record<string, string> = {
+    dungeon: 'Подземелье',
     cave: 'Пещера',
     city: 'Город',
     dwell: 'Здание',
     taverns: 'Помещение',
     village: 'Деревня',
+    battlemap: 'Дикая местность',
   };
 
   const genCategory = data.generatorType ? categoryMap[data.generatorType] || 'Генератор' : 'Генератор';
@@ -236,32 +238,68 @@ export async function createLocationFromFile(
           };
           img.src = dataUrl;
         } else {
-          resolve({
-            id: `upload_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-            name: file.name.replace(/\.[^/.]+$/, ''),
-            category: 'Пользовательская',
-            type: 'video',
-            url: blobUrl,
-            dataUrl,
-            width: 1600,
-            height: 1200,
-            aspectRatio: 1600 / 1200,
-            grid: {
-              enabled: true,
-              size: 70,
-              color: '#ffffff',
-              opacity: 0.22,
-              offsetX: 0,
-              offsetY: 0,
-            },
-            viewport: { x: 0, y: 0, scale: 1 },
-            fogActions: [],
-            isFogBaseFilled: false,
-            visited: true,
-            tags: ['Загруженная', 'Анимированная'],
-            createdAt: Date.now(),
-            lastVisitedAt: Date.now(),
-          });
+          // Определяем реальные габариты видеофайла
+          const vid = document.createElement('video');
+          vid.preload = 'metadata';
+          vid.onloadedmetadata = () => {
+            const w = vid.videoWidth || 1920;
+            const h = vid.videoHeight || 1080;
+            resolve({
+              id: `upload_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+              name: file.name.replace(/\.[^/.]+$/, ''),
+              category: 'Пользовательская',
+              type: 'video',
+              url: blobUrl,
+              dataUrl,
+              width: w,
+              height: h,
+              aspectRatio: w / h,
+              grid: {
+                enabled: true,
+                size: 70,
+                color: '#ffffff',
+                opacity: 0.22,
+                offsetX: 0,
+                offsetY: 0,
+              },
+              viewport: { x: 0, y: 0, scale: 1 },
+              fogActions: [],
+              isFogBaseFilled: false,
+              visited: true,
+              tags: ['Загруженная', 'Анимированная'],
+              createdAt: Date.now(),
+              lastVisitedAt: Date.now(),
+            });
+          };
+          vid.onerror = () => {
+            resolve({
+              id: `upload_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+              name: file.name.replace(/\.[^/.]+$/, ''),
+              category: 'Пользовательская',
+              type: 'video',
+              url: blobUrl,
+              dataUrl,
+              width: 1920,
+              height: 1080,
+              aspectRatio: 1920 / 1080,
+              grid: {
+                enabled: true,
+                size: 70,
+                color: '#ffffff',
+                opacity: 0.22,
+                offsetX: 0,
+                offsetY: 0,
+              },
+              viewport: { x: 0, y: 0, scale: 1 },
+              fogActions: [],
+              isFogBaseFilled: false,
+              visited: true,
+              tags: ['Загруженная', 'Анимированная'],
+              createdAt: Date.now(),
+              lastVisitedAt: Date.now(),
+            });
+          };
+          vid.src = blobUrl;
         }
       };
       reader.onerror = () => reject(new Error('Failed to read file'));

@@ -65,10 +65,34 @@ export function CampaignCardView({
     const cardKind = (card.type || card.engineType || 'D&D').toUpperCase();
     const cardDesc = card.summary || card.summaryMarkdown || '';
     const textToCopy = `[${card.title} - ${cardKind}]\n${cardDesc}\n${JSON.stringify(card.data, null, 2)}`;
-    navigator.clipboard.writeText(textToCopy).then(() => {
+    
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {
+        fallbackCopyText(textToCopy);
+      });
+    } else {
+      fallbackCopyText(textToCopy);
+    }
+  };
+
+  const fallbackCopyText = (text: string) => {
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } catch {
+      // noop
+    }
   };
 
   // Helper for modifiers

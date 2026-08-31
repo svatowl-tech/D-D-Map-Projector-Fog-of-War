@@ -1,0 +1,6 @@
+temple:temple,column
+tomb:tomb,sarcophagus
+dwelling:bed,table,chair
+crumbling:rubble,debris
+flooded:water,pool
+colonnades:column

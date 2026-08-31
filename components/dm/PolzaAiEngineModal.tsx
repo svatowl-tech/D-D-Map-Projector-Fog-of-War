@@ -492,7 +492,7 @@ export const PolzaAiEngineModal: React.FC<PolzaAiEngineModalProps> = ({
               <div className="lg:col-span-5 space-y-4 bg-[#1a1426] p-4 rounded-xl border border-white/10">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <FolderPlus className="w-4 h-4 text-[#ff4e00]" />
-                  Генератор сюжетных кампаний (Gemini 3.7 / 2.5 Flash)
+                  Генератор сюжетных кампаний (Polza AI Engine)
                 </h3>
 
                 <div>

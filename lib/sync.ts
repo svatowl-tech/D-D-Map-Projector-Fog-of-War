@@ -13,6 +13,7 @@ export class SyncController {
   private onMessageCallback: (msg: SyncMessage) => void;
   private hasBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window;
   private isDestroyed = false;
+  private lastProcessedTimestamp = 0;
 
   constructor(onMessage: (msg: SyncMessage) => void) {
     this.onMessageCallback = onMessage;
@@ -27,16 +28,35 @@ export class SyncController {
         this.channel = new BroadcastChannel(CHANNEL_NAME);
         this.channel.onmessage = (event: MessageEvent<SyncMessage>) => {
           if (this.isDestroyed || !event.data) return;
-          this.onMessageCallback(event.data);
+          this.processMessage(event.data);
         };
       } catch (err) {
-        console.warn('[SyncController] Ошибка создания BroadcastChannel, переход на localStorage:', err);
+        console.warn('[SyncController] BroadcastChannel creation failed, falling back to localStorage:', err);
         this.hasBroadcastChannel = false;
       }
     }
 
-    // Резервный канал через событие storage для старых браузеров / кросс-оконных вкладок
-    window.addEventListener('storage', this.handleStorageEvent);
+    // Резервный канал через событие storage (критично для Safari 13 на macOS 10.13)
+    try {
+      window.addEventListener('storage', this.handleStorageEvent);
+    } catch (err) {
+      console.warn('[SyncController] storage event listener error:', err);
+    }
+  }
+
+  private processMessage(msg: SyncMessage) {
+    if (this.isDestroyed) return;
+    // Дедупликация сообщений для предотвращения двойного срабатывания
+    if (msg.timestamp && msg.timestamp <= this.lastProcessedTimestamp) {
+      // Исключаем HEARTBEAT и PING от дедупликации только если они идентичны по времени
+      if (msg.type !== 'PING' && msg.type !== 'HEARTBEAT') {
+        return;
+      }
+    }
+    if (msg.timestamp) {
+      this.lastProcessedTimestamp = msg.timestamp;
+    }
+    this.onMessageCallback(msg);
   }
 
   private handleStorageEvent = (event: StorageEvent) => {
@@ -44,7 +64,7 @@ export class SyncController {
     if (event.key === STORAGE_KEY && event.newValue) {
       try {
         const msg: SyncMessage = JSON.parse(event.newValue);
-        this.onMessageCallback(msg);
+        this.processMessage(msg);
       } catch (err) {
         console.error('[SyncController] Ошибка парсинга сообщения localStorage:', err);
       }
@@ -57,18 +77,23 @@ export class SyncController {
   public send(msg: SyncMessage) {
     if (this.isDestroyed) return;
 
-    // 1. Попытка отправки через нативный BroadcastChannel
+    const messageWithTime: SyncMessage = {
+      ...msg,
+      timestamp: msg.timestamp || Date.now(),
+    };
+
+    // 1. Отправка через нативный BroadcastChannel (если поддерживается)
     if (this.channel) {
       try {
-        this.channel.postMessage(msg);
+        this.channel.postMessage(messageWithTime);
       } catch (err) {
         console.error('[SyncController] Ошибка отправки BroadcastChannel:', err);
       }
     }
 
-    // 2. Дублирование/fallback через localStorage для полной совместимости
+    // 2. Отправка через localStorage для Safari 13 / старых движков macOS 10.13
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...msg, _t: Date.now() }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messageWithTime));
     } catch {
       // Игнорируем квоту storage при частых событиях
     }
@@ -80,7 +105,11 @@ export class SyncController {
   public destroy() {
     this.isDestroyed = true;
     if (typeof window !== 'undefined') {
-      window.removeEventListener('storage', this.handleStorageEvent);
+      try {
+        window.removeEventListener('storage', this.handleStorageEvent);
+      } catch {
+        // noop
+      }
     }
     if (this.channel) {
       try {
