@@ -15,6 +15,7 @@ export class BattlemapState {
     this.biomeId = 'forest';
 
     this.toggles = {
+      // Overland / Natural
       hasHouse: false,
       hasRiver: true,
       hasRoad: true,
@@ -27,7 +28,47 @@ export class BattlemapState {
       poiChance: 0.1,
       treeDensity: 'dense',
       rockDensity: 'normal',
-      lighting: 'day'
+      lighting: 'day',
+
+      // Cave
+      cavePool: true,
+      caveChasm: true,
+      caveStalagmites: true,
+      caveCrystals: true,
+      caveMushrooms: true,
+      caveWebs: true,
+      caveElevatedLedge: true,
+      caveTorches: true,
+
+      // Dungeon
+      dungeonPillars: true,
+      dungeonBraziers: true,
+      dungeonAltar: true,
+      dungeonSarcophagi: true,
+      dungeonPrison: true,
+      dungeonCanal: true,
+      dungeonFurniture: true,
+      dungeonDoors: true,
+
+      // Archipelago
+      archSandbars: true,
+      archRopeBridge: true,
+      archShipwreck: true,
+      archTentacles: true,
+      archPalms: true,
+      archCampfire: true,
+      archReefs: true,
+      archVolcanic: false,
+
+      // Ship
+      shipCannons: true,
+      shipBoardingPlanks: true,
+      shipGrapplingHooks: true,
+      shipCargoHatches: true,
+      shipClutter: true,
+      shipTentacles: true,
+      shipMastsSails: true,
+      shipHelm: true
     };
 
     this.grid = {

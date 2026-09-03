@@ -79,20 +79,6 @@ export class BattlemapApp {
     this.setupMouseEvents();
     this.setupKeyboardEvents();
 
-    window.addEventListener('message', (e) => {
-      if (!e.data || typeof e.data !== 'object') return;
-      const { action, download, biome } = e.data;
-      if (action === 'GENERATE') {
-        this.state.randomizeSeed();
-      } else if (action === 'EXPORT_PNG') {
-        this.exportToParent(download);
-      } else if (action === 'SET_BIOME' && biome) {
-        this.state.setBiome(biome);
-      } else if (action === 'TOGGLE_GRID') {
-        this.state.setGridOption('visible', !this.state.grid.visible);
-      }
-    });
-
     if (!this.isProjectorView) {
       this.buildUI();
     } else {
@@ -401,10 +387,6 @@ export class BattlemapApp {
         this.state.setTool('measure');
       } else if (key === 'p') {
         this.state.setTool('pan');
-      } else if (key === 't') {
-        this.tokens.spawnQuickEncounter(this.state.biomeId, this.state.map);
-        this.broadcastTokens();
-        this.requestRender();
       } else if (key === 'v') {
         // Spawn an extra merchant wagon on the road / center
         this.vehicles.addVehicle({
@@ -517,8 +499,6 @@ export class BattlemapApp {
         </div>
         <div class="bm-quick-actions">
           <button id="btn-reroll" title="Сгенерировать случайную карту (Пробел / R)">🎲 Случайно (R)</button>
-          <button id="btn-encounter" title="Быстрая расстановка врагов (T)">⚔️ Схватка (T)</button>
-          <button id="btn-projector" title="Открыть окно для игроков / проектора">🖥️ Проектор</button>
           <button id="btn-export-png" title="Скачать карту PNG">💾 PNG</button>
         </div>
       </div>
@@ -650,7 +630,13 @@ export class BattlemapApp {
       { id: 'desert', name: '🏜️ Пески' },
       { id: 'ruins', name: '🏛️ Руины' },
       { id: 'cabin', name: '🏠 Хижина' },
-      { id: 'camp', name: '⛺ Лагерь' }
+      { id: 'village', name: '🏡 Деревня' },
+      { id: 'city', name: '🏙️ Город' },
+      { id: 'camp', name: '⛺ Лагерь' },
+      { id: 'cave', name: '🕳️ Пещеры' },
+      { id: 'dungeon', name: '🏰 Подземелье' },
+      { id: 'archipelago', name: '🏝️ Архипелаг' },
+      { id: 'ship', name: '⛵ Корабли' }
     ];
 
     const bGrid = document.getElementById('bm-biomes');
@@ -720,16 +706,6 @@ export class BattlemapApp {
     };
 
     document.getElementById('btn-reroll').onclick = () => this.state.randomizeSeed();
-    document.getElementById('btn-encounter').onclick = () => {
-      this.tokens.spawnQuickEncounter(this.state.biomeId, this.state.map);
-      this.broadcastTokens();
-      this.requestRender();
-    };
-
-    document.getElementById('btn-projector').onclick = () => {
-      const projUrl = `${window.location.pathname}?view=projector&seed=${this.state.seed}&biome=${this.state.biomeId}`;
-      window.open(projUrl, '_blank', 'width=1280,height=800,menubar=no,toolbar=no,location=no');
-    };
 
     document.getElementById('btn-export-png').onclick = () => {
       ExportManager.exportImage(this.state.map, this.grid, this.fog, this.tokens);
@@ -761,49 +737,6 @@ export class BattlemapApp {
     });
 
     this.syncCheckboxesWithState();
-  }
-
-  exportToParent(download = false) {
-    if (!this.state.map) return;
-    const W = this.state.map.grid.totalWidth;
-    const H = this.state.map.grid.totalHeight;
-    const scale = 2;
-    const offCanvas = document.createElement('canvas');
-    offCanvas.width = W * scale;
-    offCanvas.height = H * scale;
-
-    const renderer = new BattlemapRenderer(offCanvas);
-    renderer.render(this.state.map, { x: 0, y: 0, scale: scale });
-
-    const ctx = offCanvas.getContext('2d');
-    if (this.grid) this.grid.render(ctx, this.state.map, { x: 0, y: 0, scale: scale });
-    if (this.tokens) this.tokens.render(ctx, this.state.map, { x: 0, y: 0, scale: scale });
-
-    const dataUrl = offCanvas.toDataURL('image/png', 0.95);
-    const safeSeed = (this.state.seed || 'seed').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filename = `battlemap_${this.state.biomeId}_${safeSeed}.png`;
-
-    if (download) {
-      const link = document.createElement('a');
-      link.download = filename;
-      link.href = dataUrl;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type: 'BATTLEMAP_MAP_EXPORT',
-        dataUrl,
-        filename,
-        width: W,
-        height: H,
-        generatorType: 'battlemap',
-        format: 'png',
-        timestamp: Date.now()
-      }, '*');
-    }
   }
 }
 

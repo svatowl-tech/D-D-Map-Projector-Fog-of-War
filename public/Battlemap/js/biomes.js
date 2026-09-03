@@ -860,5 +860,127 @@ export const BIOMES = {
       treeDensity: 'none',
       rockDensity: 'none'
     }
+  },
+
+  village: {
+    id: 'village',
+    name: 'Деревня / Селение',
+    subtitle: 'Деревенские усадьбы, избы, кузницы, мельница, колодец, частокол и проселочные дороги',
+    ground: {
+      base: '#e3dfcc',
+      baseHex: 0xe3dfcc,
+      tint: '#d5cfaa',
+      grass: '#b0c283',
+      grassDark: '#859b57',
+      dirt: '#caaf80',
+      highlight: '#eee9d8',
+      shadow: '#6e8243'
+    },
+    water: {
+      shallow: '#8fc5c1',
+      deep: '#4d8c8c',
+      bank: '#6fa3a1',
+      foam: '#d3ebe9'
+    },
+    road: {
+      fill: '#caa873',
+      stroke: '#735732',
+      dash: '#94754a'
+    },
+    trees: {
+      type: 'deciduous',
+      foliage: ['#698c4d', '#4f7234', '#7d9f5e'],
+      stroke: '#273c17',
+      shadow: 'rgba(25, 45, 15, 0.25)',
+      trunk: '#564230'
+    },
+    fields: {
+      crop: '#b8c983',
+      furrow: '#8b9e54',
+      border: '#6a7d3c'
+    },
+    rocks: {
+      fill: '#bcbaac',
+      stroke: '#545246',
+      hatch: '#726f61'
+    },
+    building: {
+      wall: '#423121',
+      floor: '#e5d1ac',
+      planks: '#c2a87d',
+      roof: '#805132'
+    },
+    atmosphere: 'day',
+    defaultToggles: {
+      hasHouse: true,
+      hasRiver: false,
+      hasRoad: true,
+      hasFields: true,
+      hasRuins: false,
+      hasCamp: false,
+      treeDensity: 'sparse',
+      rockDensity: 'sparse'
+    }
+  },
+
+  city: {
+    id: 'city',
+    name: 'Средневековый город',
+    subtitle: 'Каменные улицы, торговые площади, ратуша, купеческие дома, мосты и фонтаны',
+    ground: {
+      base: '#d1ccc0',
+      baseHex: 0xd1ccc0,
+      tint: '#bebaae',
+      grass: '#97a876',
+      grassDark: '#6c7d4d',
+      dirt: '#a39b8c',
+      highlight: '#e3ded3',
+      shadow: '#59554b'
+    },
+    water: {
+      shallow: '#38bdf8',
+      deep: '#0284c7',
+      bank: '#1e293b',
+      foam: '#e0f2fe'
+    },
+    road: {
+      fill: '#a19a8a',
+      stroke: '#423d33',
+      dash: '#6b6354'
+    },
+    trees: {
+      type: 'deciduous',
+      foliage: ['#5b7a42', '#415a2e', '#6f9252'],
+      stroke: '#203114',
+      shadow: 'rgba(20, 30, 15, 0.28)',
+      trunk: '#4a3a2a'
+    },
+    fields: {
+      crop: '#a8b87c',
+      furrow: '#7a8a53',
+      border: '#5b6a38'
+    },
+    rocks: {
+      fill: '#8e8a7e',
+      stroke: '#38352e',
+      hatch: '#5c584f'
+    },
+    building: {
+      wall: '#27272a',
+      floor: '#cbd5e1',
+      planks: '#94a3b8',
+      roof: '#475569'
+    },
+    atmosphere: 'day',
+    defaultToggles: {
+      hasHouse: true,
+      hasRiver: false,
+      hasRoad: true,
+      hasFields: false,
+      hasRuins: false,
+      hasCamp: false,
+      treeDensity: 'sparse',
+      rockDensity: 'none'
+    }
   }
 };

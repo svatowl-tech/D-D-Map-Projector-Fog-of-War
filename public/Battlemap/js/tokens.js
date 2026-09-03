@@ -74,6 +74,26 @@ export class TokenManager {
       camp: [
         { name: 'Наемник', type: 'hostile', color: '#ea580c', hp: 15, label: 'НМ', count: 4 },
         { name: 'Командир лагеря', type: 'hostile', color: '#c2410c', hp: 42, label: 'КМ', count: 1 }
+      ],
+      cave: [
+        { name: 'Пещерный паук', type: 'hostile', color: '#7c3aed', hp: 26, sizeCells: 1, label: 'ПП', count: 3 },
+        { name: 'Троглодит-охотник', type: 'hostile', color: '#10b981', hp: 13, label: 'ТР', count: 3 },
+        { name: 'Ужас Глубин', type: 'hostile', color: '#6366f1', hp: 58, sizeCells: 2, label: 'УЖ', count: 1 }
+      ],
+      dungeon: [
+        { name: 'Скелет-рыцарь', type: 'hostile', color: '#94a3b8', hp: 22, label: 'СР', count: 3 },
+        { name: 'Тюремный надзиратель', type: 'hostile', color: '#dc2626', hp: 38, sizeCells: 1, label: 'НД', count: 1 },
+        { name: 'Некромант', type: 'hostile', color: '#a855f7', hp: 40, label: 'НК', count: 1 }
+      ],
+      archipelago: [
+        { name: 'Пират-головорез', type: 'hostile', color: '#ea580c', hp: 16, label: 'ПР', count: 4 },
+        { name: 'Боцман Крюк', type: 'hostile', color: '#b91c1c', hp: 44, label: 'БК', count: 1 },
+        { name: 'Морская сирена', type: 'hostile', color: '#06b6d4', hp: 28, label: 'СР', count: 1 }
+      ],
+      ship: [
+        { name: 'Абордажник', type: 'hostile', color: '#f97316', hp: 18, label: 'АБ', count: 4 },
+        { name: 'Канонир', type: 'hostile', color: '#eab308', hp: 15, label: 'КН', count: 2 },
+        { name: 'Капитан Галеона', type: 'hostile', color: '#b91c1c', hp: 55, label: 'КП', count: 1 }
       ]
     };
 

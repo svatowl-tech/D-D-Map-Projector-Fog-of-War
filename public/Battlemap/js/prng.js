@@ -41,6 +41,21 @@ export class PRNG {
     return Math.floor(this.float(min, max + 1));
   }
 
+  nextInt(min, max) {
+    if (min === undefined && max === undefined) {
+      return Math.floor(this.next() * 2147483647);
+    }
+    if (max === undefined) {
+      max = min;
+      min = 0;
+    }
+    return this.int(min, max);
+  }
+
+  randInt(min, max) {
+    return this.nextInt(min, max);
+  }
+
   bool(chance = 0.5) {
     return this.next() < chance;
   }
@@ -48,6 +63,17 @@ export class PRNG {
   choice(arr) {
     if (!arr || arr.length === 0) return null;
     return arr[Math.floor(this.next() * arr.length)];
+  }
+
+  shuffle(arr) {
+    if (!arr) return arr;
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(this.next() * (i + 1));
+      const temp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = temp;
+    }
+    return arr;
   }
 
   gaussian(mean = 0, stdev = 1) {

@@ -96,7 +96,28 @@ export class BattlemapRenderer {
       this.renderSwampPools(ctx, map);
     }
 
-    // 6. Roads & Paths
+    // 6. Roads & Paths & City Infrastructure
+    if (map.cityStreets && map.cityStreets.length) {
+      this.renderCityStreets(ctx, map);
+    }
+    if (map.citySidewalks && map.citySidewalks.length) {
+      this.renderCitySidewalks(ctx, map);
+    }
+    if (map.townSquare) {
+      this.renderTownSquare(ctx, map);
+    }
+    if (map.cityPlazas && map.cityPlazas.length) {
+      for (const pl of map.cityPlazas) {
+        this.renderTownSquare(ctx, { townSquare: pl });
+      }
+    }
+    if (map.villageCenter) {
+      this.renderVillageCenter(ctx, map);
+    }
+    if (map.villageFences && map.villageFences.length) {
+      this.renderVillageFences(ctx, map);
+    }
+
     if (map.roads && map.roads.length) {
       this.renderRoads(ctx, map);
     }
@@ -125,6 +146,15 @@ export class BattlemapRenderer {
     // 10. Camp & Tents
     if (map.camp) {
       this.renderCamp(ctx, map.camp, map.biome);
+    }
+
+    // Palisade Wall & Watchtowers
+    if (map.palisade) {
+      this.renderPalisade(ctx, map);
+    }
+    // City Lanterns
+    if (map.cityLanterns && map.cityLanterns.length) {
+      this.renderCityLanterns(ctx, map);
     }
 
     // 11. Points of Interest (POIs) / Интересные места (Caves, altars, treehouses, crypts, caches)
@@ -160,6 +190,11 @@ export class BattlemapRenderer {
 
   renderGround(ctx, map, W, H) {
     const biome = map.biome;
+    if ((biome && biome.id === 'city') || map.biomeId === 'city') {
+      this.renderCityCobblestoneGround(ctx, map, W, H);
+      return;
+    }
+
     ctx.fillStyle = biome.ground.base;
     ctx.fillRect(0, 0, W, H);
 
@@ -197,6 +232,85 @@ export class BattlemapRenderer {
       }
       ctx.restore();
     }
+  }
+
+  renderCityCobblestoneGround(ctx, map, W, H) {
+    ctx.save();
+
+    // Base limestone ground color
+    ctx.fillStyle = '#b3ac9f';
+    ctx.fillRect(0, 0, W, H);
+
+    // Staggered Cobblestone Texture Grid
+    const stoneW = 18;
+    const stoneH = 10;
+    const colors = ['#c2baa9', '#b5aca0', '#a8a092', '#9b9284', '#8e8677', '#817a6c'];
+
+    ctx.strokeStyle = '#38332b';
+    ctx.lineWidth = 0.7;
+
+    for (let y = 0; y < H; y += stoneH) {
+      const isOdd = Math.floor(y / stoneH) % 2 === 1;
+      const xOffset = isOdd ? stoneW * 0.5 : 0;
+
+      for (let x = -stoneW; x < W + stoneW; x += stoneW) {
+        const sx = x + xOffset;
+        const hash = Math.abs(Math.sin(sx * 12.9898 + y * 78.233) * 43758.5453);
+        const colorIdx = Math.floor(hash * colors.length) % colors.length;
+
+        ctx.fillStyle = colors[colorIdx];
+        ctx.fillRect(sx + 0.5, y + 0.5, stoneW - 1, stoneH - 1);
+        ctx.strokeRect(sx + 0.5, y + 0.5, stoneW - 1, stoneH - 1);
+      }
+    }
+
+    if (this.paperPattern) {
+      ctx.save();
+      ctx.globalAlpha = 0.10;
+      ctx.fillStyle = this.paperPattern;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  renderCitySidewalks(ctx, map) {
+    if (!map.citySidewalks || !map.citySidewalks.length) return;
+
+    ctx.save();
+    for (const sw of map.citySidewalks) {
+      ctx.save();
+
+      // Raised sidewalk flagstone base (Тротуар из брусчатки/плит)
+      ctx.fillStyle = '#d6cebf';
+      ctx.fillRect(sw.x, sw.y, sw.w, sw.h);
+
+      // Flagstone grid joints
+      ctx.strokeStyle = '#8c8474';
+      ctx.lineWidth = 0.8;
+      const step = 16;
+      for (let x = sw.x; x < sw.x + sw.w; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, sw.y);
+        ctx.lineTo(x, sw.y + sw.h);
+        ctx.stroke();
+      }
+
+      // Granite curb line (Каменный бордюр)
+      ctx.strokeStyle = '#2b2721';
+      ctx.lineWidth = 2.0;
+      ctx.strokeRect(sw.x, sw.y, sw.w, sw.h);
+
+      // Gutter drainage (Сточная канавка)
+      ctx.strokeStyle = '#1c1915';
+      ctx.lineWidth = 1.0;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(sw.x + 1, sw.y + 1, sw.w - 2, sw.h - 2);
+
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   renderElevation(ctx, map, W, H) {
@@ -556,33 +670,113 @@ export class BattlemapRenderer {
         ctx.restore();
       }
 
-      // 2. Front Porch Deck (facing the road)
-      if (b.hasPorch && b.door) {
-        const doorSide = b.door.side || 'south';
-        let px = b.x + b.width * 0.5 - 18;
-        let py = b.y + b.height;
-        let pw = 36, ph = 12;
-        if (doorSide === 'north') { py = b.y - 12; }
-        else if (doorSide === 'west') { px = b.x - 12; py = b.y + b.height * 0.5 - 18; pw = 12; ph = 36; }
-        else if (doorSide === 'east') { px = b.x + b.width; py = b.y + b.height * 0.5 - 18; pw = 12; ph = 36; }
+      // 2. Outdoor Horse Paddock / Fence Enclosure (e.g. for Stables or Farmsteads)
+      if (b.paddock) {
+        const pad = b.paddock;
+        ctx.save();
 
-        ctx.fillStyle = '#91724f';
-        ctx.fillRect(px, py, pw, ph);
-        ctx.strokeStyle = '#4a331c';
+        // Paddock Ground Patch
+        ctx.fillStyle = '#7a674d'; // Dirt/straw paddock ground
+        ctx.fillRect(pad.x, pad.y, pad.w, pad.h);
+
+        // Fence Posts and Rails
+        ctx.strokeStyle = '#5a3f24';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(pad.x, pad.y, pad.w, pad.h);
+
+        // Fence corner posts
+        ctx.fillStyle = '#3a2614';
+        const postR = 4;
+        ctx.beginPath();
+        ctx.arc(pad.x, pad.y, postR, 0, Math.PI * 2);
+        ctx.arc(pad.x + pad.w, pad.y, postR, 0, Math.PI * 2);
+        ctx.arc(pad.x + pad.w, pad.y + pad.h, postR, 0, Math.PI * 2);
+        ctx.arc(pad.x, pad.y + pad.h, postR, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Mid fence posts along perimeter
+        for (let fx = pad.x + 30; fx < pad.x + pad.w - 10; fx += 30) {
+          ctx.beginPath();
+          ctx.arc(fx, pad.y, 3, 0, Math.PI * 2);
+          ctx.arc(fx, pad.y + pad.h, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (let fy = pad.y + 30; fy < pad.y + pad.h - 10; fy += 30) {
+          ctx.beginPath();
+          ctx.arc(pad.x + pad.w, fy, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Paddock props: Water Trough + Hay Bale inside pen
+        ctx.fillStyle = '#4a6360'; // Water in trough
+        ctx.fillRect(pad.x + 12, pad.y + 12, 16, 28);
+        ctx.strokeStyle = '#382615';
         ctx.lineWidth = 1.5;
-        ctx.strokeRect(px, py, pw, ph);
+        ctx.strokeRect(pad.x + 12, pad.y + 12, 16, 28);
+
+        ctx.fillStyle = '#c9a84d'; // Hay bale
+        ctx.fillRect(pad.x + pad.w - 32, pad.y + 12, 22, 16);
+        ctx.strokeRect(pad.x + pad.w - 32, pad.y + 12, 22, 16);
+
+        // Horse silhouette inside paddock
+        ctx.fillStyle = '#59381e'; // Brown horse body
+        ctx.beginPath();
+        ctx.ellipse(pad.x + pad.w * 0.5, pad.y + pad.h * 0.5, 14, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(pad.x + pad.w * 0.5 + 12, pad.y + pad.h * 0.5 - 4, 5, 0, Math.PI * 2); // Horse head
+        ctx.fill();
+
+        ctx.restore();
       }
 
-      // 3. Outdoor Features (Well, Woodpile)
+      // 3. Front Porch Deck (facing the road)
+      if (b.hasPorch && b.door) {
+        const doorSide = b.door.side || 'south';
+        let px = b.x + b.width * 0.5 - 20;
+        let py = b.y + b.height;
+        let pw = 40, ph = 14;
+        if (doorSide === 'north') { py = b.y - 14; }
+        else if (doorSide === 'west') { px = b.x - 14; py = b.y + b.height * 0.5 - 20; pw = 14; ph = 40; }
+        else if (doorSide === 'east') { px = b.x + b.width; py = b.y + b.height * 0.5 - 20; pw = 14; ph = 40; }
+
+        if (b.porchStyle === 'stone') {
+          ctx.fillStyle = '#807b71';
+          ctx.fillRect(px, py, pw, ph);
+          ctx.strokeStyle = '#3b3833';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(px, py, pw, ph);
+          // Pillars
+          ctx.fillStyle = '#a19b8f';
+          ctx.beginPath();
+          ctx.arc(px + 4, py + 4, 3, 0, Math.PI * 2);
+          ctx.arc(px + pw - 4, py + 4, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = '#91724f';
+          ctx.fillRect(px, py, pw, ph);
+          ctx.strokeStyle = '#4a331c';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(px, py, pw, ph);
+          // Wooden posts
+          ctx.fillStyle = '#3a2614';
+          ctx.beginPath();
+          ctx.arc(px + 4, py + 4, 2.5, 0, Math.PI * 2);
+          ctx.arc(px + pw - 4, py + 4, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // 4. Outdoor Features (Well, Woodpile, Hitching Post, Scrap Pile)
       if (b.outdoorFeatures) {
         for (const feat of b.outdoorFeatures) {
           if (feat.type === 'well') {
-            // Shadow
             ctx.fillStyle = 'rgba(20, 20, 20, 0.3)';
             ctx.beginPath();
             ctx.arc(feat.x + 2, feat.y + 2, feat.r, 0, Math.PI * 2);
             ctx.fill();
-            // Stone rim
+
             ctx.fillStyle = '#8f897c';
             ctx.beginPath();
             ctx.arc(feat.x, feat.y, feat.r, 0, Math.PI * 2);
@@ -590,12 +784,12 @@ export class BattlemapRenderer {
             ctx.strokeStyle = '#47433b';
             ctx.lineWidth = 2;
             ctx.stroke();
-            // Deep water center
+
             ctx.fillStyle = '#2d4745';
             ctx.beginPath();
             ctx.arc(feat.x, feat.y, feat.r * 0.6, 0, Math.PI * 2);
             ctx.fill();
-            // Wooden crossbeam
+
             ctx.strokeStyle = '#5a3d24';
             ctx.lineWidth = 3;
             ctx.beginPath();
@@ -608,7 +802,7 @@ export class BattlemapRenderer {
             ctx.strokeStyle = '#3e2a16';
             ctx.lineWidth = 1.5;
             ctx.strokeRect(feat.x, feat.y, feat.w, feat.h);
-            // Individual log rounds
+
             ctx.fillStyle = '#9e7951';
             for (let lx = feat.x + 4; lx < feat.x + feat.w - 2; lx += 7) {
               for (let ly = feat.y + 4; ly < feat.y + feat.h - 2; ly += 7) {
@@ -618,95 +812,149 @@ export class BattlemapRenderer {
                 ctx.stroke();
               }
             }
+          } else if (feat.type === 'hitching_post') {
+            ctx.strokeStyle = '#4a331c';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(feat.x, feat.y - 12);
+            ctx.lineTo(feat.x, feat.y + 12);
+            ctx.stroke();
+
+            ctx.fillStyle = '#2d1b0d';
+            ctx.beginPath();
+            ctx.arc(feat.x, feat.y - 12, 3, 0, Math.PI * 2);
+            ctx.arc(feat.x, feat.y + 12, 3, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (feat.type === 'scrap_pile') {
+            ctx.fillStyle = '#524f4b';
+            ctx.beginPath();
+            ctx.arc(feat.x + feat.w * 0.5, feat.y + feat.h * 0.5, feat.w * 0.45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#2b2927';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
           }
         }
       }
 
-      // Building Cast Shadow (D&D tactical style)
+      // 5. Building Cast Shadow
       ctx.fillStyle = 'rgba(15, 15, 15, 0.35)';
       ctx.fillRect(b.x + 6, b.y + 6, b.width, b.height);
 
-      // Floor Planks / Interior floor
-      ctx.fillStyle = biome.building.floor;
-      ctx.fillRect(b.x, b.y, b.width, b.height);
+      // 6. Multi-Room Interior Floors
+      if (b.rooms && b.rooms.length > 0) {
+        for (const rm of b.rooms) {
+          const rx = b.x + rm.relX;
+          const ry = b.y + rm.relY;
+          const rw = rm.relW;
+          const rh = rm.relH;
 
-      // Interior wooden floorboards (Watabou Dungeon style)
-      ctx.strokeStyle = biome.building.planks;
-      ctx.lineWidth = 1;
-      const plankW = 12;
-      for (let px = b.x; px <= b.x + b.width; px += plankW) {
-        ctx.beginPath();
-        ctx.moveTo(px, b.y);
-        ctx.lineTo(px, b.y + b.height);
-        ctx.stroke();
+          ctx.save();
+          if (rm.floorStyle === 'stone_flagstones') {
+            ctx.fillStyle = '#7a766d';
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = '#545048';
+            ctx.lineWidth = 1;
+            for (let gx = rx; gx < rx + rw; gx += 16) {
+              ctx.beginPath(); ctx.moveTo(gx, ry); ctx.lineTo(gx, ry + rh); ctx.stroke();
+            }
+            for (let gy = ry; gy < ry + rh; gy += 16) {
+              ctx.beginPath(); ctx.moveTo(rx, gy); ctx.lineTo(rx + rw, gy); ctx.stroke();
+            }
+          } else if (rm.floorStyle === 'cobblestone') {
+            ctx.fillStyle = '#57544e';
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = '#383632';
+            ctx.lineWidth = 1;
+            for (let cx = rx + 6; cx < rx + rw - 4; cx += 12) {
+              for (let cy = ry + 6; cy < ry + rh - 4; cy += 12) {
+                ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.stroke();
+              }
+            }
+          } else if (rm.floorStyle === 'straw_timber') {
+            ctx.fillStyle = '#a68b58';
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = '#d4b76e';
+            ctx.lineWidth = 1;
+            for (let sx = rx + 4; sx < rx + rw - 4; sx += 8) {
+              ctx.beginPath(); ctx.moveTo(sx, ry + 4); ctx.lineTo(sx + 6, ry + rh - 4); ctx.stroke();
+            }
+          } else if (rm.floorStyle === 'fancy_carpet') {
+            ctx.fillStyle = '#8a2b2b';
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = '#d4a837';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(rx + 6, ry + 6, rw - 12, rh - 12);
+          } else {
+            ctx.fillStyle = biome.building.floor;
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = biome.building.planks;
+            ctx.lineWidth = 1;
+            const plankW = 12;
+            for (let px = rx; px <= rx + rw; px += plankW) {
+              ctx.beginPath(); ctx.moveTo(px, ry); ctx.lineTo(px, ry + rh); ctx.stroke();
+            }
+          }
+          ctx.restore();
+        }
+      } else {
+        ctx.fillStyle = biome.building.floor;
+        ctx.fillRect(b.x, b.y, b.width, b.height);
       }
 
-      // Interior Props (Bed, Table, Hearth, Barrels, Crates)
+      // 7. Interior Props Rendering
       if (b.props) {
         for (const prop of b.props) {
-          if (prop.type === 'bed') {
-            ctx.fillStyle = '#c54e4e'; // Blanket
-            ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
-            ctx.strokeStyle = '#4a2222';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
-            // Pillow
-            ctx.fillStyle = '#f0ece0';
-            ctx.fillRect(prop.x + 2, prop.y + 2, prop.w - 4, prop.h * 0.28);
-          } else if (prop.type === 'table') {
-            ctx.fillStyle = '#8f6843';
-            ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
-            ctx.strokeStyle = '#47301c';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
-            // Benches on sides
-            ctx.fillStyle = '#6b4c2d';
-            ctx.fillRect(prop.x, prop.y - 7, prop.w, 4);
-            ctx.fillRect(prop.x, prop.y + prop.h + 3, prop.w, 4);
-          } else if (prop.type === 'hearth') {
-            // Stone chimney hearth
-            ctx.fillStyle = '#635e55';
-            ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
-            ctx.strokeStyle = '#2b2925';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
-            // Fire glowing embers
-            ctx.fillStyle = '#e86128';
-            ctx.beginPath();
-            ctx.arc(prop.x + prop.w * 0.5, prop.y + prop.h * 0.5, 4, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (prop.type === 'crate') {
-            ctx.fillStyle = '#8c704f';
-            ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
-            ctx.strokeStyle = '#423321';
-            ctx.lineWidth = 1.2;
-            ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
-            // Diagonal brace
-            ctx.beginPath();
-            ctx.moveTo(prop.x, prop.y);
-            ctx.lineTo(prop.x + prop.w, prop.y + prop.h);
-            ctx.stroke();
-          } else if (prop.type === 'barrel') {
-            ctx.fillStyle = '#7a5a3a';
-            ctx.beginPath();
-            ctx.arc(prop.x, prop.y, prop.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#382615';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
+          this.renderBuildingProp(ctx, prop);
+        }
+      }
+
+      // 8. Internal Wall Partitions
+      if (b.internalWalls) {
+        ctx.strokeStyle = biome.building.wall;
+        ctx.lineWidth = 5;
+        for (const wall of b.internalWalls) {
+          ctx.beginPath();
+          ctx.moveTo(wall.x1, wall.y1);
+          ctx.lineTo(wall.x2, wall.y2);
+          ctx.stroke();
+
+          if (wall.door) {
+            const doorSize = wall.door.size || 20;
+            let cx = wall.door.x || (wall.x1 + wall.x2) * 0.5;
+            let cy = wall.door.y || (wall.y1 + wall.y2) * 0.5;
+
+            ctx.fillStyle = '#8f7a5b';
+            if (Math.abs(wall.x1 - wall.x2) < 2) {
+              ctx.fillRect(cx - 3, cy - doorSize * 0.5, 6, doorSize);
+              ctx.strokeStyle = '#634424';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(cx, cy - doorSize * 0.5);
+              ctx.lineTo(cx + 10, cy);
+              ctx.stroke();
+            } else {
+              ctx.fillRect(cx - doorSize * 0.5, cy - 3, doorSize, 6);
+              ctx.strokeStyle = '#634424';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(cx - doorSize * 0.5, cy);
+              ctx.lineTo(cx, cy + 10);
+              ctx.stroke();
+            }
           }
         }
       }
 
-      // Exterior Thick Walls (Watabou Dungeon Crosshatch style)
+      // 9. Exterior Thick Wall Shell
       ctx.strokeStyle = biome.building.wall;
       ctx.lineWidth = b.wallThickness;
       ctx.strokeRect(b.x, b.y, b.width, b.height);
 
-      // Door opening with door swing arc (facing road)
+      // 10. Door opening with door swing arc (facing road)
       if (b.door) {
         const doorSide = b.door.side || 'south';
-        const doorW = 20;
+        const doorW = 22;
         let dx = b.x + b.width * 0.5 - doorW * 0.5;
         let dy = b.y + b.height - b.wallThickness * 0.5;
         let clearW = doorW + 2, clearH = b.wallThickness + 4;
@@ -737,11 +985,9 @@ export class BattlemapRenderer {
           swingEndY = dy + 12;
         }
 
-        // Clear wall for doorway
         ctx.fillStyle = biome.building.floor;
         ctx.fillRect(dx - 1, dy - 1, clearW, clearH);
 
-        // Door wooden plank swung open
         ctx.strokeStyle = '#805934';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
@@ -750,7 +996,7 @@ export class BattlemapRenderer {
         ctx.stroke();
       }
 
-      // Windows (Thin blue/light double line slits)
+      // 11. Windows
       if (b.windows) {
         ctx.strokeStyle = '#8bc4db';
         ctx.lineWidth = 3;
@@ -773,8 +1019,215 @@ export class BattlemapRenderer {
         }
       }
 
+      // 12. Tactical Building Name Tag Banner
+      if (b.name) {
+        ctx.save();
+        ctx.font = 'bold 12px "Cinzel", "Georgia", serif';
+        const nameText = b.name;
+        const textMetrics = ctx.measureText(nameText);
+        const padX = 10, padY = 5;
+        const boxW = textMetrics.width + padX * 2;
+        const boxH = 20;
+        const tagX = b.x + b.width * 0.5 - boxW * 0.5;
+        const tagY = b.y - 18;
+
+        ctx.fillStyle = 'rgba(28, 24, 20, 0.88)';
+        ctx.fillRect(tagX, tagY, boxW, boxH);
+        ctx.strokeStyle = '#d4af37';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tagX, tagY, boxW, boxH);
+
+        ctx.fillStyle = '#f0e6d2';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(nameText, b.x + b.width * 0.5, tagY + boxH * 0.5);
+        ctx.restore();
+      }
+
       ctx.restore();
     }
+  }
+
+  renderBuildingProp(ctx, prop) {
+    ctx.save();
+    if (prop.type === 'bar_counter') {
+      ctx.fillStyle = '#573a21';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#2b1c0e';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = '#d4af37';
+      ctx.fillRect(prop.x + prop.w * 0.2, prop.y + 2, 4, 6);
+      ctx.fillRect(prop.x + prop.w * 0.4, prop.y + 2, 4, 6);
+
+      ctx.fillStyle = '#8f5d34';
+      for (let sx = prop.x + 12; sx < prop.x + prop.w - 10; sx += 20) {
+        ctx.beginPath();
+        ctx.arc(sx, prop.y + prop.h + 6, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else if (prop.type === 'drinking_table') {
+      ctx.fillStyle = '#8f6843';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#47301c';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = '#6b4c2d';
+      ctx.fillRect(prop.x, prop.y - 6, prop.w, 4);
+      ctx.fillRect(prop.x, prop.y + prop.h + 2, prop.w, 4);
+
+      ctx.fillStyle = '#a1a8b0';
+      ctx.beginPath();
+      ctx.arc(prop.x + 8, prop.y + prop.h * 0.5, 3, 0, Math.PI * 2);
+      ctx.arc(prop.x + prop.w - 8, prop.y + prop.h * 0.5, 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (prop.type === 'double_bed') {
+      ctx.fillStyle = '#9e3333';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#4a1717';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = '#f2efe9';
+      ctx.fillRect(prop.x + 3, prop.y + 3, prop.w * 0.45 - 2, prop.h * 0.26);
+      ctx.fillRect(prop.x + prop.w * 0.55 - 1, prop.y + 3, prop.w * 0.45 - 2, prop.h * 0.26);
+    } else if (prop.type === 'bed') {
+      ctx.fillStyle = '#c54e4e';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#4a2222';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.fillStyle = '#f0ece0';
+      ctx.fillRect(prop.x + 2, prop.y + 2, prop.w - 4, prop.h * 0.28);
+    } else if (prop.type === 'dining_table') {
+      ctx.fillStyle = '#7a5433';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#3d2817';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+    } else if (prop.type === 'hearth' || prop.type === 'forge_hearth') {
+      ctx.fillStyle = '#635e55';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#2b2925';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = prop.type === 'forge_hearth' ? '#ff3300' : '#e86128';
+      ctx.beginPath();
+      ctx.arc(prop.x + prop.w * 0.5, prop.y + prop.h * 0.5, 5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (prop.type === 'anvil') {
+      ctx.fillStyle = '#3a3d40';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y, prop.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#18191a';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#616870';
+      ctx.fillRect(prop.x - prop.r * 0.8, prop.y - 2, prop.r * 1.6, 4);
+    } else if (prop.type === 'horse_stall') {
+      ctx.strokeStyle = '#5e432a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = 'rgba(212, 183, 110, 0.4)';
+      ctx.fillRect(prop.x + 2, prop.y + 2, prop.w - 4, prop.h - 4);
+
+      ctx.fillStyle = '#382615';
+      ctx.fillRect(prop.x + 4, prop.y + 4, prop.w - 8, 8);
+    } else if (prop.type === 'millstone') {
+      ctx.fillStyle = '#827f79';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y, prop.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#3d3b38';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      ctx.fillStyle = '#2b1b0e';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y, prop.r * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (prop.type === 'pelt_drying_frame') {
+      ctx.strokeStyle = '#614327';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = '#875d38';
+      ctx.beginPath();
+      ctx.ellipse(prop.x + prop.w * 0.5, prop.y + prop.h * 0.5, prop.w * 0.35, prop.h * 0.38, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (prop.type === 'bookshelf') {
+      ctx.fillStyle = '#543922';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#2b1b0e';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      const colors = ['#8a2b2b', '#2b548a', '#2b8a43', '#d4af37'];
+      let bx = prop.x + 4;
+      let ci = 0;
+      while (bx < prop.x + prop.w - 6) {
+        ctx.fillStyle = colors[ci % colors.length];
+        ctx.fillRect(bx, prop.y + 2, 4, prop.h - 4);
+        bx += 5;
+        ci++;
+      }
+    } else if (prop.type === 'desk') {
+      ctx.fillStyle = '#785233';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#3d2817';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.fillStyle = '#f5e8c4';
+      ctx.fillRect(prop.x + 6, prop.y + 4, 10, 8);
+    } else if (prop.type === 'weapons_rack') {
+      ctx.fillStyle = '#5e432a';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#2b1b0e';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+
+      ctx.strokeStyle = '#bdc5cc';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(prop.x + 6, prop.y + 2); ctx.lineTo(prop.x + prop.w - 6, prop.y + 2);
+      ctx.moveTo(prop.x + 6, prop.y + prop.h - 2); ctx.lineTo(prop.x + prop.w - 6, prop.y + prop.h - 2);
+      ctx.stroke();
+    } else if (prop.type === 'grain_sack') {
+      ctx.fillStyle = '#c7b38d';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#615339';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else if (prop.type === 'crate') {
+      ctx.fillStyle = '#8c704f';
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.strokeStyle = '#423321';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.beginPath();
+      ctx.moveTo(prop.x, prop.y);
+      ctx.lineTo(prop.x + prop.w, prop.y + prop.h);
+      ctx.stroke();
+    } else if (prop.type === 'barrel') {
+      ctx.fillStyle = '#7a5a3a';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y, prop.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#382615';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   renderRuins(ctx, map) {
@@ -832,10 +1285,417 @@ export class BattlemapRenderer {
         }
       }
 
-      // 2. Stepped Ceremonial Dais (Tiered Stone Platforms)
+      // 2. Amphitheater Arena Floor & Concentric Seating Tiers & Arcades
+      if (r.arenaFloor) {
+        ctx.save();
+        const af = r.arenaFloor;
+        // Sand arena floor
+        ctx.fillStyle = '#d97706';
+        ctx.beginPath();
+        ctx.ellipse(af.cx, af.cy, af.rx, af.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Blood/dirt combat stains
+        ctx.fillStyle = 'rgba(120, 30, 20, 0.35)';
+        ctx.beginPath();
+        ctx.ellipse(af.cx - af.rx * 0.2, af.cy + af.ry * 0.1, af.rx * 0.35, af.ry * 0.25, 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (r.concentricRings) {
+        ctx.save();
+        for (const ring of r.concentricRings) {
+          ctx.strokeStyle = '#52525b';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.ellipse(r.cx, r.cy, ring.rx, ring.ry, 0, ring.breachAngle + ring.breachArc, ring.breachAngle);
+          ctx.stroke();
+
+          // Inner tier step line
+          ctx.strokeStyle = '#71717a';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.ellipse(r.cx, r.cy, ring.rx - 2, ring.ry - 2, 0, ring.breachAngle + ring.breachArc, ring.breachAngle);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (r.arcades) {
+        ctx.save();
+        for (const arc of r.arcades) {
+          ctx.strokeStyle = '#3f3f46';
+          ctx.lineWidth = 8;
+          ctx.beginPath();
+          ctx.ellipse(arc.cx, arc.cy, arc.rx, arc.ry, 0, arc.angStart, arc.angEnd);
+          ctx.stroke();
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (r.trapdoor) {
+        ctx.save();
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(r.trapdoor.x - r.trapdoor.width * 0.5, r.trapdoor.y - r.trapdoor.height * 0.5, r.trapdoor.width, r.trapdoor.height);
+        ctx.strokeStyle = '#71717a';
+        ctx.lineWidth = 1.5;
+        // Grate bars
+        for (let gx = -r.trapdoor.width * 0.5 + 4; gx < r.trapdoor.width * 0.5; gx += 6) {
+          ctx.beginPath();
+          ctx.moveTo(r.trapdoor.x + gx, r.trapdoor.y - r.trapdoor.height * 0.5);
+          ctx.lineTo(r.trapdoor.x + gx, r.trapdoor.y + r.trapdoor.height * 0.5);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (r.statues) {
+        for (const st of r.statues) {
+          ctx.save();
+          ctx.translate(st.x, st.y);
+          ctx.rotate(st.fallenAngle);
+          // Base plinth
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(-10, -10, 20, 20);
+          ctx.strokeRect(-10, -10, 20, 20);
+          // Fallen broken torso
+          ctx.fillStyle = '#71717a';
+          ctx.fillRect(8, -6, 22, 12);
+          ctx.strokeRect(8, -6, 22, 12);
+          // Broken head
+          ctx.beginPath();
+          ctx.arc(36, 0, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 3. Fortress Bastions & Keep & Armory & Siege Debris
+      if (r.bastions) {
+        ctx.save();
+        for (const bas of r.bastions) {
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(bas.x, bas.y, bas.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          // Arrow slits
+          ctx.strokeStyle = '#09090b';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(bas.x - 6, bas.y); ctx.lineTo(bas.x + 6, bas.y);
+          ctx.moveTo(bas.x, bas.y - 6); ctx.lineTo(bas.x, bas.y + 6);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (r.keep) {
+        ctx.save();
+        ctx.fillStyle = '#3f3f46';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2.5;
+        ctx.fillRect(r.keep.x, r.keep.y, r.keep.w, r.keep.h);
+        ctx.strokeRect(r.keep.x, r.keep.y, r.keep.w, r.keep.h);
+        // Throne dais
+        ctx.fillStyle = '#71717a';
+        ctx.fillRect(r.keep.x + r.keep.w * 0.3, r.keep.y + 6, r.keep.w * 0.4, 20);
+        ctx.strokeRect(r.keep.x + r.keep.w * 0.3, r.keep.y + 6, r.keep.w * 0.4, 20);
+        ctx.restore();
+      }
+
+      if (r.armory) {
+        for (const arm of r.armory) {
+          ctx.save();
+          if (arm.type === 'weapon_rack') {
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(arm.x - 12, arm.y - 4, 24, 8);
+            ctx.strokeStyle = '#e4e4e7';
+            ctx.lineWidth = 1.2;
+            for (let i = -8; i <= 8; i += 4) {
+              ctx.beginPath();
+              ctx.moveTo(arm.x + i, arm.y - 10);
+              ctx.lineTo(arm.x + i, arm.y + 10);
+              ctx.stroke();
+            }
+          } else {
+            // Supply crates
+            ctx.fillStyle = '#92400e';
+            ctx.strokeStyle = '#451a03';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(arm.x - 8, arm.y - 8, 16, 16);
+            ctx.strokeRect(arm.x - 8, arm.y - 8, 16, 16);
+          }
+          ctx.restore();
+        }
+      }
+
+      if (r.siegeDebris) {
+        for (const sd of r.siegeDebris) {
+          ctx.save();
+          ctx.translate(sd.x, sd.y);
+          ctx.rotate(sd.angle);
+          // Broken wooden beam frame
+          ctx.strokeStyle = '#78350f';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(-18, -10); ctx.lineTo(18, 10);
+          ctx.moveTo(-10, 14); ctx.lineTo(12, -14);
+          ctx.stroke();
+          // Catapult iron wheel
+          ctx.fillStyle = '#27272a';
+          ctx.beginPath();
+          ctx.arc(10, 10, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // 4. Druid Circle Monoliths, Sacrificial Pit & Tree Roots
+      if (r.monoliths) {
+        for (const m of r.monoliths) {
+          ctx.save();
+          ctx.translate(m.x, m.y);
+          ctx.rotate(m.angle);
+          // Drop shadow
+          ctx.fillStyle = 'rgba(20, 20, 20, 0.4)';
+          ctx.fillRect(-m.w * 0.5 + 3, -m.h * 0.5 + 3, m.w, m.h);
+          // Standing stone
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 2;
+          ctx.fillRect(-m.w * 0.5, -m.h * 0.5, m.w, m.h);
+          ctx.strokeRect(-m.w * 0.5, -m.h * 0.5, m.w, m.h);
+          // Moss highlight
+          ctx.fillStyle = '#166534';
+          ctx.fillRect(-m.w * 0.3, -m.h * 0.5, m.w * 0.6, 3);
+          ctx.restore();
+        }
+      }
+
+      if (r.sacrificialPit) {
+        ctx.save();
+        const sp = r.sacrificialPit;
+        ctx.fillStyle = '#27272a';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, sp.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Glowing celestial runes
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, sp.radius * 0.6, 0, Math.PI * 2);
+        ctx.moveTo(sp.x - sp.radius * 0.5, sp.y); ctx.lineTo(sp.x + sp.radius * 0.5, sp.y);
+        ctx.moveTo(sp.x, sp.y - sp.radius * 0.5); ctx.lineTo(sp.x, sp.y + sp.radius * 0.5);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (r.treeRoots) {
+        for (const tr of r.treeRoots) {
+          ctx.save();
+          ctx.strokeStyle = '#78350f';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(tr.x, tr.y);
+          ctx.quadraticCurveTo(tr.x + Math.cos(tr.angle + 0.4) * (tr.len * 0.5), tr.y + Math.sin(tr.angle + 0.4) * (tr.len * 0.5), tr.x + Math.cos(tr.angle) * tr.len, tr.y + Math.sin(tr.angle) * tr.len);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 5. Manor Fireplace, Fountain & Library Debris
+      if (r.fireplace) {
+        ctx.save();
+        const fp = r.fireplace;
+        ctx.fillStyle = '#27272a';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2;
+        ctx.fillRect(fp.x - fp.width * 0.5, fp.y, fp.width, fp.height);
+        ctx.strokeRect(fp.x - fp.width * 0.5, fp.y, fp.width, fp.height);
+        // Soot & embers
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.arc(fp.x, fp.y + fp.height * 0.5, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (r.fountain) {
+        ctx.save();
+        const ft = r.fountain;
+        ctx.fillStyle = '#0284c7';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(ft.x, ft.y, ft.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Central pedestal
+        ctx.fillStyle = '#71717a';
+        ctx.beginPath();
+        ctx.arc(ft.x, ft.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (r.libraryDebris) {
+        for (const ld of r.libraryDebris) {
+          ctx.save();
+          if (ld.type === 'bookcase') {
+            ctx.fillStyle = '#78350f';
+            ctx.strokeStyle = '#451a03';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(ld.x - 14, ld.y - 6, 28, 12);
+            ctx.strokeRect(ld.x - 14, ld.y - 6, 28, 12);
+          } else {
+            ctx.fillStyle = '#a16207';
+            ctx.fillRect(ld.x - 8, ld.y - 8, 16, 16);
+          }
+          ctx.restore();
+        }
+      }
+
+      // 6. Shrine Statue Alcove & Urns
+      if (r.statueAlcove) {
+        ctx.save();
+        const sa = r.statueAlcove;
+        ctx.fillStyle = '#3f3f46';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(sa.x, sa.y, sa.radius, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Deity statue
+        ctx.fillStyle = '#a1a1aa';
+        ctx.beginPath();
+        ctx.arc(sa.x, sa.y - sa.radius * 0.3, 7, 0, Math.PI * 2);
+        ctx.fill();
+        // Glowing eyes/halo
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(sa.x, sa.y - sa.radius * 0.3, 10, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (r.urns) {
+        for (const u of r.urns) {
+          ctx.save();
+          ctx.fillStyle = '#ea580c';
+          ctx.strokeStyle = '#7c2d12';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, u.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          // Coin glint
+          ctx.fillStyle = '#fef08a';
+          ctx.fillRect(u.x - 1, u.y - 1, 2, 2);
+          ctx.restore();
+        }
+      }
+
+      // 7. Sunken Crypt Stairs & Burial Niches
+      if (r.stairs) {
+        ctx.save();
+        const st = r.stairs;
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(st.x, st.y, st.width, st.length);
+        const stepH = st.length / st.steps;
+        for (let s = 0; s < st.steps; s++) {
+          const alpha = 1.0 - (s / st.steps) * 0.7;
+          ctx.fillStyle = `rgba(161, 161, 170, ${alpha})`;
+          ctx.fillRect(st.x, st.y + s * stepH, st.width, stepH - 1);
+        }
+        ctx.restore();
+      }
+
+      if (r.burialNiches) {
+        for (const bn of r.burialNiches) {
+          ctx.save();
+          ctx.translate(bn.x, bn.y);
+          ctx.rotate(bn.angle);
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(-bn.width * 0.5, -bn.height * 0.5, bn.width, bn.height);
+          ctx.strokeRect(-bn.width * 0.5, -bn.height * 0.5, bn.width, bn.height);
+          // Lid
+          const off = bn.lidDisplaced ? 6 : 0;
+          ctx.fillStyle = '#71717a';
+          ctx.fillRect(-bn.width * 0.5 + off, -bn.height * 0.5 - 1, bn.width, bn.height);
+          ctx.strokeRect(-bn.width * 0.5 + off, -bn.height * 0.5 - 1, bn.width, bn.height);
+          ctx.restore();
+        }
+      }
+
+      // 8. Observatory Octagonal Walls & Astrolabe Floor
+      if (r.octagonalWalls) {
+        ctx.save();
+        for (const w of r.octagonalWalls) {
+          ctx.strokeStyle = '#52525b';
+          ctx.lineWidth = w.thickness || 14;
+          ctx.beginPath();
+          ctx.moveTo(w.x1, w.y1);
+          ctx.lineTo(w.x2, w.y2);
+          ctx.stroke();
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (r.astrolabeFloor) {
+        ctx.save();
+        const af = r.astrolabeFloor;
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#ca8a04';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(af.cx, af.cy, af.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Celestial constellation lines
+        ctx.strokeStyle = 'rgba(253, 224, 71, 0.65)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(af.cx, af.cy, af.radius * 0.6, 0, Math.PI * 2);
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+          ctx.moveTo(af.cx, af.cy);
+          ctx.lineTo(af.cx + Math.cos(a) * af.radius, af.cy + Math.sin(a) * af.radius);
+        }
+        ctx.stroke();
+
+        // Central sun sigil
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(af.cx, af.cy, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 9. Dais, Moss, Crypt Stairs, Sarcophagi, Walls, Buttresses, Pillars, Altar, Rubble
       if (r.dais) {
         ctx.save();
-        // Outer tier shadow & fill
         ctx.fillStyle = 'rgba(20, 20, 20, 0.25)';
         ctx.fillRect(r.dais.x - 3, r.dais.y - 3, r.dais.width + 6, r.dais.height + 6);
 
@@ -845,7 +1705,6 @@ export class BattlemapRenderer {
         ctx.lineWidth = 2;
         ctx.strokeRect(r.dais.x, r.dais.y, r.dais.width, r.dais.height);
 
-        // Inner raised tier
         ctx.fillStyle = 'rgba(20, 20, 20, 0.2)';
         ctx.fillRect(r.dais.innerX - 2, r.dais.innerY - 2, r.dais.innerWidth + 4, r.dais.innerHeight + 4);
 
@@ -857,7 +1716,6 @@ export class BattlemapRenderer {
         ctx.restore();
       }
 
-      // 3. Creeping Ivy & Moss Patches on Stones
       if (r.mossPatches) {
         ctx.save();
         for (const m of r.mossPatches) {
@@ -874,19 +1732,15 @@ export class BattlemapRenderer {
         ctx.restore();
       }
 
-      // 4. Sunken Crypt Descent Stairs (Darkness underground)
       if (r.cryptStairs) {
         ctx.save();
         const cs = r.cryptStairs;
-        // Outer stone railing / parapet
         ctx.fillStyle = '#423d32';
         ctx.fillRect(cs.x - 4, cs.y - cs.width * 0.5 - 4, cs.length + 8, cs.width + 8);
 
-        // Dark underground pit
         ctx.fillStyle = '#11100e';
         ctx.fillRect(cs.x, cs.y - cs.width * 0.5, cs.length, cs.width);
 
-        // Descending stone steps
         const stepW = cs.length / cs.steps;
         for (let s = 0; s < cs.steps; s++) {
           const stepX = cs.x + s * stepW;
@@ -900,25 +1754,21 @@ export class BattlemapRenderer {
         ctx.restore();
       }
 
-      // 5. Ancient Stone Sarcophagi / Tombs
       if (r.sarcophagi) {
         for (const tomb of r.sarcophagi) {
           ctx.save();
           ctx.translate(tomb.x, tomb.y);
           ctx.rotate(tomb.angle);
 
-          // Shadow
           ctx.fillStyle = 'rgba(20, 20, 20, 0.35)';
           ctx.fillRect(-tomb.width * 0.5 + 4, -tomb.height * 0.5 + 4, tomb.width, tomb.height);
 
-          // Stone casket base
           ctx.fillStyle = '#7a7566';
           ctx.fillRect(-tomb.width * 0.5, -tomb.height * 0.5, tomb.width, tomb.height);
           ctx.strokeStyle = '#2b2820';
           ctx.lineWidth = 2;
           ctx.strokeRect(-tomb.width * 0.5, -tomb.height * 0.5, tomb.width, tomb.height);
 
-          // Displaced / Open lid
           const lidOffset = tomb.lidDisplaced ? 8 : 0;
           ctx.fillStyle = '#9e9785';
           ctx.fillRect(-tomb.width * 0.5 + lidOffset, -tomb.height * 0.5 - 2, tomb.width, tomb.height);
@@ -926,7 +1776,6 @@ export class BattlemapRenderer {
           ctx.lineWidth = 2;
           ctx.strokeRect(-tomb.width * 0.5 + lidOffset, -tomb.height * 0.5 - 2, tomb.width, tomb.height);
 
-          // Carved cross/sword on lid
           ctx.strokeStyle = '#4a4537';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -940,7 +1789,6 @@ export class BattlemapRenderer {
         }
       }
 
-      // 6. Massive Ruined Masonry Walls (Thick stone blocks with breaches & crumbles)
       if (r.walls) {
         for (const w of r.walls) {
           ctx.save();
@@ -953,19 +1801,15 @@ export class BattlemapRenderer {
           ctx.translate(w.x1, w.y1);
           ctx.rotate(ang);
 
-          // Wall Cast Shadow
           ctx.fillStyle = 'rgba(20, 20, 20, 0.38)';
           ctx.fillRect(0, -thick * 0.5 + 4, len, thick + 4);
 
-          // Solid Masonry Wall Fill
           ctx.fillStyle = '#4c473b';
           ctx.fillRect(0, -thick * 0.5, len, thick);
 
-          // Top Stone Cap Layer
           ctx.fillStyle = '#827d6d';
           ctx.fillRect(0, -thick * 0.35, len, thick * 0.7);
 
-          // Stone block joint lines along wall
           ctx.strokeStyle = '#2c2921';
           ctx.lineWidth = 1.2;
           const blockLen = 22;
@@ -976,12 +1820,10 @@ export class BattlemapRenderer {
             ctx.stroke();
           }
 
-          // Dark Ink Outlines
           ctx.strokeStyle = '#1e1c16';
           ctx.lineWidth = 2.2;
           ctx.strokeRect(0, -thick * 0.5, len, thick);
 
-          // Fractured ragged ends at breaks
           ctx.fillStyle = '#3a362b';
           ctx.beginPath();
           ctx.arc(0, 0, thick * 0.45, 0, Math.PI * 2);
@@ -992,7 +1834,6 @@ export class BattlemapRenderer {
         }
       }
 
-      // 7. Corner Buttresses
       if (r.buttresses) {
         ctx.fillStyle = '#5a5445';
         ctx.strokeStyle = '#23201a';
@@ -1003,11 +1844,9 @@ export class BattlemapRenderer {
         }
       }
 
-      // 8. Colonnades & Monumental Pillars
       if (r.pillars) {
         for (const pil of r.pillars) {
           ctx.save();
-          // Square Plinth Shadow & Base
           const plSize = pil.plinthSize || 24;
           ctx.fillStyle = 'rgba(20, 20, 20, 0.32)';
           ctx.fillRect(pil.x - plSize * 0.5 + 3, pil.y - plSize * 0.5 + 3, plSize, plSize);
@@ -1019,23 +1858,19 @@ export class BattlemapRenderer {
           ctx.strokeRect(pil.x - plSize * 0.5, pil.y - plSize * 0.5, plSize, plSize);
 
           if (pil.isFallen) {
-            // Fallen broken column drum segments
             ctx.save();
             ctx.translate(pil.x, pil.y);
             ctx.rotate(pil.fallenAngle);
 
-            // Shadow
             ctx.fillStyle = 'rgba(20, 20, 20, 0.35)';
             ctx.fillRect(0, -pil.radius + 3, pil.fallenLength, pil.radius * 2);
 
-            // Broken Cylindrical Shaft
             ctx.fillStyle = '#b3ad9c';
             ctx.fillRect(0, -pil.radius, pil.fallenLength, pil.radius * 2);
             ctx.strokeStyle = '#322e24';
             ctx.lineWidth = 2;
             ctx.strokeRect(0, -pil.radius, pil.fallenLength, pil.radius * 2);
 
-            // Drum segment fracture lines
             const drumLen = pil.fallenLength / 3;
             for (let d = 1; d <= 2; d++) {
               ctx.beginPath();
@@ -1045,8 +1880,6 @@ export class BattlemapRenderer {
             }
             ctx.restore();
           } else {
-            // Standing Column: Torus base, fluted shaft, top capital
-            // Outer torus ring
             ctx.fillStyle = '#a6a08f';
             ctx.beginPath();
             ctx.arc(pil.x, pil.y, pil.radius, 0, Math.PI * 2);
@@ -1055,7 +1888,6 @@ export class BattlemapRenderer {
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Inner fluted column core
             ctx.fillStyle = '#c7c1b0';
             ctx.beginPath();
             ctx.arc(pil.x, pil.y, pil.radius * 0.72, 0, Math.PI * 2);
@@ -1064,7 +1896,6 @@ export class BattlemapRenderer {
             ctx.lineWidth = 1.2;
             ctx.stroke();
 
-            // Radial flute lines
             for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
               ctx.beginPath();
               ctx.moveTo(pil.x + Math.cos(a) * (pil.radius * 0.4), pil.y + Math.sin(a) * (pil.radius * 0.4));
@@ -1072,8 +1903,7 @@ export class BattlemapRenderer {
               ctx.stroke();
             }
 
-            // Center eye
-            ctx.fillStyle = '#4a4436';
+            ctx.fillStyle = '#4a4537';
             ctx.beginPath();
             ctx.arc(pil.x, pil.y, pil.radius * 0.22, 0, Math.PI * 2);
             ctx.fill();
@@ -1082,26 +1912,21 @@ export class BattlemapRenderer {
         }
       }
 
-      // 9. Central Arcane Altar & Ritual Braziers
       if (r.altar) {
         ctx.save();
-        // Altar Base Shadow
         ctx.fillStyle = 'rgba(20, 20, 20, 0.4)';
         ctx.fillRect(r.altar.x - r.altar.width * 0.5 + 4, r.altar.y - r.altar.height * 0.5 + 4, r.altar.width, r.altar.height);
 
-        // Stone Altar Slab
         ctx.fillStyle = '#655f50';
         ctx.fillRect(r.altar.x - r.altar.width * 0.5, r.altar.y - r.altar.height * 0.5, r.altar.width, r.altar.height);
         ctx.strokeStyle = '#1c1a14';
         ctx.lineWidth = 2.5;
         ctx.strokeRect(r.altar.x - r.altar.width * 0.5, r.altar.y - r.altar.height * 0.5, r.altar.width, r.altar.height);
 
-        // Top polished stone slab
         ctx.fillStyle = '#878170';
         ctx.fillRect(r.altar.x - r.altar.width * 0.42, r.altar.y - r.altar.height * 0.42, r.altar.width * 0.84, r.altar.height * 0.84);
         ctx.strokeRect(r.altar.x - r.altar.width * 0.42, r.altar.y - r.altar.height * 0.42, r.altar.width * 0.84, r.altar.height * 0.84);
 
-        // Glowing Arcane Ritual Glyph / Sigils
         ctx.strokeStyle = '#7ee8fa';
         ctx.lineWidth = 1.8;
         ctx.beginPath();
@@ -1113,10 +1938,8 @@ export class BattlemapRenderer {
         ctx.lineTo(r.altar.x, r.altar.y + 14);
         ctx.stroke();
 
-        // Corner Braziers
         if (r.altar.braziers) {
           for (const bz of r.altar.braziers) {
-            // Brazier glow
             const grad = ctx.createRadialGradient(bz.x, bz.y, 2, bz.x, bz.y, 22);
             grad.addColorStop(0, 'rgba(255, 160, 40, 0.45)');
             grad.addColorStop(1, 'rgba(255, 100, 0, 0)');
@@ -1125,7 +1948,6 @@ export class BattlemapRenderer {
             ctx.arc(bz.x, bz.y, 22, 0, Math.PI * 2);
             ctx.fill();
 
-            // Iron bowl
             ctx.fillStyle = '#302d24';
             ctx.beginPath();
             ctx.arc(bz.x, bz.y, bz.radius, 0, Math.PI * 2);
@@ -1134,7 +1956,6 @@ export class BattlemapRenderer {
             ctx.lineWidth = 1.5;
             ctx.stroke();
 
-            // Fire ember
             ctx.fillStyle = '#fbc531';
             ctx.beginPath();
             ctx.arc(bz.x, bz.y, bz.radius * 0.5, 0, Math.PI * 2);
@@ -1144,7 +1965,6 @@ export class BattlemapRenderer {
         ctx.restore();
       }
 
-      // 10. Rubble Piles & Scattered Ashlar Blocks
       if (r.rubblePiles) {
         for (const rub of r.rubblePiles) {
           ctx.save();
@@ -1169,11 +1989,9 @@ export class BattlemapRenderer {
           ctx.translate(blk.x, blk.y);
           ctx.rotate(blk.angle);
 
-          // Shadow
           ctx.fillStyle = 'rgba(20, 20, 20, 0.28)';
           ctx.fillRect(-blk.w * 0.5 + 2, -blk.h * 0.5 + 2, blk.w, blk.h);
 
-          // Dressed Stone Block
           ctx.fillStyle = '#aba493';
           ctx.fillRect(-blk.w * 0.5, -blk.h * 0.5, blk.w, blk.h);
           ctx.strokeStyle = '#383329';
@@ -1182,6 +2000,25 @@ export class BattlemapRenderer {
 
           ctx.restore();
         }
+      }
+
+      // 10. Ruin Name Tag Banner
+      if (r.name) {
+        ctx.save();
+        ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+        const textWidth = ctx.measureText(r.name).width;
+        const tagY = r.cy - (r.mainH || (r.radius ? r.radius * 2 : 100)) * 0.5 - 14;
+
+        ctx.fillStyle = 'rgba(24, 24, 27, 0.75)';
+        ctx.strokeStyle = '#ca8a04';
+        ctx.lineWidth = 1;
+        ctx.fillRect(r.cx - textWidth * 0.5 - 8, tagY - 12, textWidth + 16, 20);
+        ctx.strokeRect(r.cx - textWidth * 0.5 - 8, tagY - 12, textWidth + 16, 20);
+
+        ctx.fillStyle = '#fef08a';
+        ctx.textAlign = 'center';
+        ctx.fillText(r.name, r.cx, tagY + 2);
+        ctx.restore();
       }
 
       ctx.restore();
@@ -2744,27 +3581,45 @@ export class BattlemapRenderer {
   renderCaveNetwork(ctx, map, W, H) {
     const cn = map.caveNetwork;
     if (!cn) return;
+    const cs = map.grid.cellSize;
 
     ctx.save();
-    ctx.fillStyle = '#09090b';
+    // 1. Bedrock cavern void background (illuminated charcoal slate)
+    ctx.fillStyle = '#1e222b';
     ctx.fillRect(0, 0, W, H);
 
-    cn.chambers.forEach(ch => {
-      ctx.save();
-      ctx.fillStyle = '#27272a';
-      ctx.beginPath();
-      ctx.ellipse(ch.x, ch.y, ch.rx, ch.ry, ch.angle || 0, 0, Math.PI * 2);
-      ctx.fill();
+    // 2. Cavern Floor Passages & Chambers Fill (Clear, readable natural slate stone)
+    const baseFloorColor = '#475161';
+    const walkwayColor = '#5e6b7e';
+    const wallShadow = '#141820';
 
-      ctx.strokeStyle = '#18181b';
-      ctx.lineWidth = 6;
+    // Outer rock wall shadow buffer
+    cn.passages.forEach(p => {
+      ctx.save();
+      ctx.strokeStyle = wallShadow;
+      ctx.lineWidth = p.width + 14;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p.p1.x, p.p1.y);
+      ctx.quadraticCurveTo(p.control.x, p.control.y, p.p2.x, p.p2.y);
       ctx.stroke();
       ctx.restore();
     });
 
+    cn.chambers.forEach(ch => {
+      ctx.save();
+      ctx.fillStyle = wallShadow;
+      ctx.beginPath();
+      ctx.ellipse(ch.x, ch.y, ch.rx + 7, ch.ry + 7, ch.angle || 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // Passages Inner Walkway
     cn.passages.forEach(p => {
       ctx.save();
-      ctx.strokeStyle = '#27272a';
+      ctx.strokeStyle = baseFloorColor;
       ctx.lineWidth = p.width;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -2773,65 +3628,313 @@ export class BattlemapRenderer {
       ctx.quadraticCurveTo(p.control.x, p.control.y, p.p2.x, p.p2.y);
       ctx.stroke();
 
-      ctx.strokeStyle = '#18181b';
-      ctx.lineWidth = p.width + 8;
-      ctx.globalCompositeOperation = 'destination-over';
-      ctx.beginPath();
-      ctx.moveTo(p.p1.x, p.p1.y);
-      ctx.quadraticCurveTo(p.control.x, p.control.y, p.p2.x, p.p2.y);
+      // Footpath dirt/gravel wear highlight
+      ctx.strokeStyle = walkwayColor;
+      ctx.lineWidth = p.width * 0.55;
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = p.width * 0.25;
       ctx.stroke();
       ctx.restore();
     });
 
-    if (cn.pool) {
+    // Chambers Inner Floor
+    cn.chambers.forEach(ch => {
       ctx.save();
+      ctx.fillStyle = baseFloorColor;
+      ctx.beginPath();
+      ctx.ellipse(ch.x, ch.y, ch.rx, ch.ry, ch.angle || 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Stone floor tactile concentric rings
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(ch.x, ch.y, ch.rx * 0.72, ch.ry * 0.72, ch.angle || 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(ch.x, ch.y, ch.rx * 0.42, ch.ry * 0.42, ch.angle || 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Subtle light center wash
+      const cGrad = ctx.createRadialGradient(ch.x, ch.y, 4, ch.x, ch.y, Math.min(ch.rx, ch.ry));
+      cGrad.addColorStop(0, 'rgba(255, 255, 255, 0.09)');
+      cGrad.addColorStop(1, 'rgba(0, 0, 0, 0.04)');
+      ctx.fillStyle = cGrad;
+      ctx.beginPath();
+      ctx.ellipse(ch.x, ch.y, ch.rx, ch.ry, ch.angle || 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // 3. Subterranean Chasm / Void
+    if (cn.chasm) {
+      const chm = cn.chasm;
+      ctx.save();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = chm.width;
+      ctx.beginPath();
+      ctx.moveTo(chm.x1, chm.y1);
+      ctx.lineTo(chm.x2, chm.y2);
+      ctx.stroke();
+
+      // Jagged abyss edge cracks
+      ctx.strokeStyle = '#18181b';
+      ctx.lineWidth = 2;
+      for (let y = chm.y1; y <= chm.y2; y += 30) {
+        ctx.beginPath();
+        ctx.moveTo(chm.x1 - chm.width * 0.5, y);
+        ctx.lineTo(chm.x1 - chm.width * 0.5 - 12, y + 8);
+        ctx.moveTo(chm.x1 + chm.width * 0.5, y + 15);
+        ctx.lineTo(chm.x1 + chm.width * 0.5 + 12, y + 22);
+        ctx.stroke();
+      }
+
+      // Chasm Bridges
+      if (chm.bridges) {
+        chm.bridges.forEach(br => {
+          ctx.save();
+          ctx.translate(br.x, br.y);
+          ctx.rotate(br.angle || 0);
+
+          if (br.type === 'stone') {
+            ctx.fillStyle = '#52525b';
+            ctx.strokeStyle = '#18181b';
+            ctx.lineWidth = 2;
+            ctx.fillRect(-br.length * 0.5, -br.width * 0.5, br.length, br.width);
+            ctx.strokeRect(-br.length * 0.5, -br.width * 0.5, br.length, br.width);
+            // Parapet railings
+            ctx.fillStyle = '#3f3f46';
+            ctx.fillRect(-br.length * 0.5, -br.width * 0.5 - 2, br.length, 3);
+            ctx.fillRect(-br.length * 0.5, br.width * 0.5 - 1, br.length, 3);
+          } else {
+            // Suspended Wooden Plank Bridge
+            ctx.strokeStyle = '#78350f';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(-br.length * 0.5, -br.width * 0.5);
+            ctx.lineTo(br.length * 0.5, -br.width * 0.5);
+            ctx.moveTo(-br.length * 0.5, br.width * 0.5);
+            ctx.lineTo(br.length * 0.5, br.width * 0.5);
+            ctx.stroke();
+
+            // Planks
+            for (let px = -br.length * 0.5 + 4; px <= br.length * 0.5 - 4; px += 8) {
+              ctx.fillStyle = '#92400e';
+              ctx.fillRect(px - 3, -br.width * 0.5, 6, br.width);
+              ctx.strokeStyle = '#451a03';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(px - 3, -br.width * 0.5, 6, br.width);
+            }
+          }
+          ctx.restore();
+        });
+      }
+      ctx.restore();
+    }
+
+    // 4. Subterranean Bioluminescent Pool
+    if (cn.pool) {
       const p = cn.pool;
-      ctx.fillStyle = '#0891b2';
-      ctx.shadowColor = '#06b6d4';
-      ctx.shadowBlur = 15;
+      ctx.save();
+
+      // Deep water pool
+      const wGrad = ctx.createRadialGradient(p.x, p.y, 4, p.x, p.y, p.rx);
+      wGrad.addColorStop(0, '#06b6d4');
+      wGrad.addColorStop(0.65, '#0891b2');
+      wGrad.addColorStop(1, '#0e7490');
+      ctx.fillStyle = wGrad;
+      ctx.shadowColor = p.glowColor || 'rgba(6, 182, 212, 0.6)';
+      ctx.shadowBlur = 24;
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = '#67e8f9';
-      ctx.lineWidth = 2;
+      // Ripples
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, p.rx * 0.6, p.ry * 0.6, 0, 0, Math.PI * 2);
       ctx.stroke();
+
+      // Stepping stones
+      if (p.steppingStones) {
+        p.steppingStones.forEach(st => {
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Moss highlight
+          ctx.fillStyle = '#10b981';
+          ctx.beginPath();
+          ctx.arc(st.x - 2, st.y - 2, st.r * 0.45, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
       ctx.restore();
     }
 
+    // 5. Spiderwebs
+    if (cn.webs) {
+      cn.webs.forEach(w => {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(244, 244, 245, 0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        const spokes = 8;
+        for (let i = 0; i < spokes; i++) {
+          const a = (i / spokes) * Math.PI * 2;
+          ctx.moveTo(w.x, w.y);
+          ctx.lineTo(w.x + Math.cos(a) * w.radius, w.y + Math.sin(a) * w.radius);
+        }
+        for (let ring = 0.3; ring <= 1.0; ring += 0.3) {
+          ctx.moveTo(w.x + w.radius * ring, w.y);
+          ctx.arc(w.x, w.y, w.radius * ring, 0, Math.PI * 2);
+        }
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    // 6. Stalagmites with 3D Conical Shading
     if (cn.stalagmites) {
       cn.stalagmites.forEach(st => {
         ctx.save();
-        ctx.fillStyle = '#3f3f46';
-        ctx.strokeStyle = '#09090b';
-        ctx.lineWidth = 2;
+        // Shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+        ctx.beginPath();
+        ctx.ellipse(st.x + 3, st.y + 4, st.radius * 1.1, st.radius * 0.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Base Rock
+        ctx.fillStyle = '#52525b';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 1.8;
         ctx.beginPath();
         ctx.arc(st.x, st.y, st.radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = '#71717a';
+        // Conical Peak / Top highlight
+        ctx.fillStyle = '#a1a1aa';
         ctx.beginPath();
-        ctx.arc(st.x - st.radius * 0.2, st.y - st.radius * 0.2, st.radius * 0.4, 0, Math.PI * 2);
+        ctx.arc(st.x - st.radius * 0.25, st.y - st.radius * 0.25, st.radius * 0.35, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       });
     }
 
-    if (cn.torches) {
-      cn.torches.forEach(t => {
+    // 7. Glowing Crystals
+    if (cn.crystals) {
+      cn.crystals.forEach(cr => {
         ctx.save();
-        ctx.fillStyle = '#f59e0b';
-        ctx.shadowColor = '#fbbf24';
-        ctx.shadowBlur = 20;
+        // Glow aura
+        const cGrad = ctx.createRadialGradient(cr.x, cr.y, 2, cr.x, cr.y, cs * 1.8);
+        cGrad.addColorStop(0, cr.color);
+        cGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = cGrad;
         ctx.beginPath();
-        ctx.arc(t.x, t.y, 6, 0, Math.PI * 2);
+        ctx.arc(cr.x, cr.y, cs * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Crystal Facet Diamond
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = cr.color;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(cr.x, cr.y - cr.radius * 1.3);
+        ctx.lineTo(cr.x + cr.radius, cr.y);
+        ctx.lineTo(cr.x, cr.y + cr.radius * 1.3);
+        ctx.lineTo(cr.x - cr.radius, cr.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    // 8. Glowing Cave Mushrooms
+    if (cn.mushrooms) {
+      cn.mushrooms.forEach(m => {
+        ctx.save();
+        ctx.fillStyle = m.color;
+        ctx.shadowColor = m.color;
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, 3.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       });
     }
+
+    // 9. Elevated Ledge Stairs
+    if (cn.elevatedLedge) {
+      const el = cn.elevatedLedge;
+      const st = el.stairs;
+      ctx.save();
+      ctx.fillStyle = '#71717a';
+      ctx.strokeStyle = '#18181b';
+      ctx.lineWidth = 1.8;
+      ctx.fillRect(st.x, st.y, st.w, st.h);
+      ctx.strokeRect(st.x, st.y, st.w, st.h);
+
+      // Steps
+      const numSteps = 5;
+      for (let s = 1; s < numSteps; s++) {
+        const sy = st.y + (s / numSteps) * st.h;
+        ctx.beginPath();
+        ctx.moveTo(st.x, sy);
+        ctx.lineTo(st.x + st.w, sy);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 10. Wall Torches
+    if (cn.torches) {
+      cn.torches.forEach(t => {
+        ctx.save();
+        const tGrad = ctx.createRadialGradient(t.x, t.y, 3, t.x, t.y, t.lightRadius || cs * 4);
+        tGrad.addColorStop(0, 'rgba(251, 146, 60, 0.7)');
+        tGrad.addColorStop(0.4, 'rgba(249, 115, 22, 0.25)');
+        tGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = tGrad;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.lightRadius || cs * 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Torch Sconce & Flame
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(t.x - 2, t.y - 2, 4, 8);
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y - 3, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y - 3, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    // Chamber Tactical Name Labels
+    cn.chambers.forEach(ch => {
+      if (ch.name) {
+        ctx.save();
+        ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+        ctx.fillStyle = 'rgba(244, 244, 245, 0.75)';
+        ctx.textAlign = 'center';
+        ctx.fillText(ch.name, ch.x, ch.y - ch.ry * 0.6);
+        ctx.restore();
+      }
+    });
 
     ctx.restore();
   }
@@ -2839,24 +3942,28 @@ export class BattlemapRenderer {
   renderDungeonComplex(ctx, map, W, H) {
     const dc = map.dungeonComplex;
     if (!dc) return;
+    const cs = map.grid.cellSize;
 
     ctx.save();
+    // 1. Solid Stone Bedrock Fill
     ctx.fillStyle = '#09090b';
     ctx.fillRect(0, 0, W, H);
 
+    // 2. Corridors
     dc.corridors.forEach(c => {
       ctx.save();
-      ctx.strokeStyle = '#27272a';
-      ctx.lineWidth = c.width;
+      // Bedrock Wall outline
+      ctx.strokeStyle = '#18181b';
+      ctx.lineWidth = c.width + 12;
       ctx.lineCap = 'square';
       ctx.beginPath();
       ctx.moveTo(c.x1, c.y1);
       ctx.lineTo(c.x2, c.y2);
       ctx.stroke();
 
-      ctx.strokeStyle = '#09090b';
-      ctx.lineWidth = c.width + 10;
-      ctx.globalCompositeOperation = 'destination-over';
+      // Flagstone floor
+      ctx.strokeStyle = '#27272a';
+      ctx.lineWidth = c.width;
       ctx.beginPath();
       ctx.moveTo(c.x1, c.y1);
       ctx.lineTo(c.x2, c.y2);
@@ -2864,14 +3971,21 @@ export class BattlemapRenderer {
       ctx.restore();
     });
 
+    // 3. Rooms
     dc.rooms.forEach(rm => {
       ctx.save();
+      // Outer thick stone walls
+      ctx.strokeStyle = '#18181b';
+      ctx.lineWidth = 10;
+      ctx.strokeRect(rm.x, rm.y, rm.w, rm.h);
+
+      // Room Floor with stone flagstones
       ctx.fillStyle = '#27272a';
       ctx.fillRect(rm.x, rm.y, rm.w, rm.h);
 
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      // Flagstone mortar lines
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
       ctx.lineWidth = 1;
-      const cs = map.grid.cellSize;
       for (let x = rm.x; x <= rm.x + rm.w; x += cs) {
         ctx.beginPath(); ctx.moveTo(x, rm.y); ctx.lineTo(x, rm.y + rm.h); ctx.stroke();
       }
@@ -2879,38 +3993,341 @@ export class BattlemapRenderer {
         ctx.beginPath(); ctx.moveTo(rm.x, y); ctx.lineTo(rm.x + rm.w, y); ctx.stroke();
       }
 
-      ctx.strokeStyle = '#09090b';
-      ctx.lineWidth = 8;
-      ctx.strokeRect(rm.x, rm.y, rm.w, rm.h);
+      // Altar Dais if present
+      if (rm.altarDais) {
+        const ad = rm.altarDais;
+        ctx.fillStyle = '#3f3f46';
+        ctx.strokeStyle = '#71717a';
+        ctx.lineWidth = 2;
+        ctx.fillRect(ad.x, ad.y, ad.w, ad.h);
+        ctx.strokeRect(ad.x, ad.y, ad.w, ad.h);
+
+        // Bloodstone Altar Table
+        ctx.fillStyle = '#7f1d1d';
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 2;
+        ctx.fillRect(ad.x + ad.w * 0.25, ad.y + ad.h * 0.25, ad.w * 0.5, ad.h * 0.5);
+        ctx.strokeRect(ad.x + ad.w * 0.25, ad.y + ad.h * 0.25, ad.w * 0.5, ad.h * 0.5);
+      }
       ctx.restore();
     });
 
+    // 4. Subterranean Canal / Sewer
+    if (dc.canal) {
+      const cn = dc.canal;
+      ctx.save();
+      ctx.fillStyle = cn.waterColor || '#0e7490';
+      ctx.fillRect(0, cn.y, W, cn.height);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 1.5;
+      for (let x = 20; x < W; x += 60) {
+        ctx.beginPath();
+        ctx.moveTo(x, cn.y + cn.height * 0.3);
+        ctx.lineTo(x + 25, cn.y + cn.height * 0.3);
+        ctx.moveTo(x + 30, cn.y + cn.height * 0.7);
+        ctx.lineTo(x + 55, cn.y + cn.height * 0.7);
+        ctx.stroke();
+      }
+
+      // Canal Bridges
+      if (cn.bridges) {
+        cn.bridges.forEach(br => {
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 2;
+          ctx.fillRect(br.x, br.y, br.w, br.h);
+          ctx.strokeRect(br.x, br.y, br.w, br.h);
+        });
+      }
+      ctx.restore();
+    }
+
+    // 5. Massive Carved Pillars
     if (dc.pillars) {
       dc.pillars.forEach(p => {
         ctx.save();
+        // Shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.beginPath();
+        ctx.arc(p.x + 3, p.y + 3, cs * 0.48, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Pillar Base
         ctx.fillStyle = '#52525b';
-        ctx.strokeStyle = '#09090b';
+        ctx.strokeStyle = '#18181b';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, map.grid.cellSize * 0.45, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, cs * 0.48, 0, Math.PI * 2);
         ctx.fill();
+        ctx.stroke();
+
+        // Inner Fluting Ring
+        ctx.fillStyle = '#71717a';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, cs * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    // 6. Stone Sarcophagi
+    if (dc.sarcophagi) {
+      dc.sarcophagi.forEach(s => {
+        ctx.save();
+        ctx.fillStyle = s.isMaster ? '#78350f' : '#3f3f46';
+        ctx.strokeStyle = s.isMaster ? '#eab308' : '#18181b';
+        ctx.lineWidth = s.isMaster ? 2.5 : 1.8;
+        ctx.fillRect(s.x, s.y, s.w, s.h);
+        ctx.strokeRect(s.x, s.y, s.w, s.h);
+
+        // Carved relief on lid
+        ctx.strokeStyle = s.isMaster ? '#fde047' : '#71717a';
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(s.x + 3, s.y + 3, s.w - 6, s.h - 6);
+        ctx.beginPath();
+        ctx.moveTo(s.x + s.w * 0.3, s.y + s.h * 0.5);
+        ctx.lineTo(s.x + s.w * 0.7, s.y + s.h * 0.5);
         ctx.stroke();
         ctx.restore();
       });
     }
 
+    // 7. Iron Prison Cells
+    if (dc.prisonCells) {
+      dc.prisonCells.forEach(cell => {
+        ctx.save();
+        // Straw bedding
+        ctx.fillStyle = '#ca8a04';
+        ctx.fillRect(cell.x + 4, cell.y + 4, cell.w * 0.45, cell.h * 0.4);
+
+        // Cell Iron Bars
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2;
+        const barY = cell.side === 'north' ? cell.y + cell.h : cell.y;
+        for (let bx = cell.x; bx <= cell.x + cell.w; bx += 8) {
+          ctx.beginPath();
+          ctx.arc(bx, barY, 2, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
+
+    // 8. Furniture & Props
+    if (dc.furniture) {
+      dc.furniture.forEach(f => {
+        ctx.save();
+        if (f.type === 'table') {
+          ctx.fillStyle = '#78350f';
+          ctx.strokeStyle = '#451a03';
+          ctx.lineWidth = 1.8;
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.strokeRect(f.x, f.y, f.w, f.h);
+          // Parchment map on table
+          ctx.fillStyle = '#fef3c7';
+          ctx.fillRect(f.x + 4, f.y + 4, f.w * 0.4, f.h * 0.6);
+        } else if (f.type === 'rack') {
+          // Torture Rack
+          ctx.fillStyle = '#52525b';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 1.8;
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.strokeRect(f.x, f.y, f.w, f.h);
+          // Chains
+          ctx.strokeStyle = '#dc2626';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(f.x + 4, f.y + 4, f.w - 8, f.h - 8);
+        } else if (f.type === 'chest') {
+          // Gold Trimmed Loot Chest
+          ctx.fillStyle = '#ca8a04';
+          ctx.strokeStyle = '#78350f';
+          ctx.lineWidth = 1.8;
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.strokeRect(f.x, f.y, f.w, f.h);
+        } else if (f.type === 'throne') {
+          // Majestic Throne
+          ctx.fillStyle = '#7f1d1d';
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 2;
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.strokeRect(f.x, f.y, f.w, f.h);
+          ctx.fillStyle = '#3f3f46';
+          ctx.fillRect(f.x, f.y, f.w, f.h * 0.3);
+        } else if (f.type === 'bookshelf') {
+          // Bookshelf
+          ctx.fillStyle = '#451a03';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.strokeRect(f.x, f.y, f.w, f.h);
+          const colors = ['#dc2626', '#2563eb', '#16a34a', '#eab308', '#9333ea'];
+          for (let bx = f.x + 3; bx < f.x + f.w - 4; bx += 5) {
+            ctx.fillStyle = colors[Math.floor(bx) % colors.length];
+            ctx.fillRect(bx, f.y + 2, 3, f.h - 4);
+          }
+        } else if (f.type === 'ritual_circle') {
+          // Runic Ritual Circle
+          ctx.strokeStyle = '#a855f7';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, f.radius || 20, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)';
+          ctx.lineWidth = 1.2;
+          const rad = f.radius || 20;
+          ctx.beginPath();
+          for (let i = 0; i < 5; i++) {
+            const ang = (i * 4 * Math.PI) / 5 - Math.PI * 0.5;
+            const px = f.x + Math.cos(ang) * rad;
+            const py = f.y + Math.sin(ang) * rad;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
+
+    // 8.5 Staircases & Level Transitions
+    if (dc.stairs) {
+      dc.stairs.forEach(st => {
+        ctx.save();
+        const numSteps = 6;
+        const stepH = st.h / numSteps;
+
+        if (st.type === 'stair_up') {
+          ctx.fillStyle = '#3f3f46';
+          ctx.fillRect(st.x, st.y, st.w, st.h);
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(st.x, st.y, st.w, st.h);
+
+          for (let i = 0; i < numSteps; i++) {
+            const sy = st.y + i * stepH;
+            ctx.fillStyle = i % 2 === 0 ? '#52525b' : '#3f3f46';
+            ctx.fillRect(st.x + 2, sy, st.w - 4, stepH);
+            ctx.strokeStyle = '#fef08a';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(st.x + 2, sy);
+            ctx.lineTo(st.x + st.w - 2, sy);
+            ctx.stroke();
+          }
+
+          ctx.font = 'bold 10px system-ui, -apple-system, sans-serif';
+          ctx.fillStyle = '#fef08a';
+          ctx.textAlign = 'center';
+          ctx.fillText(st.label || '▲ На поверхность', st.x + st.w * 0.5, st.y - 4);
+
+        } else if (st.type === 'stair_down') {
+          ctx.fillStyle = '#09090b';
+          ctx.fillRect(st.x, st.y, st.w, st.h);
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(st.x, st.y, st.w, st.h);
+
+          for (let i = 0; i < numSteps; i++) {
+            const sy = st.y + i * stepH;
+            const alpha = 1 - (i / numSteps) * 0.85;
+            ctx.fillStyle = `rgba(39, 39, 42, ${alpha})`;
+            ctx.fillRect(st.x + 2, sy, st.w - 4, stepH);
+            ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(st.x + 2, sy + stepH);
+            ctx.lineTo(st.x + st.w - 2, sy + stepH);
+            ctx.stroke();
+          }
+
+          ctx.font = 'bold 10px system-ui, -apple-system, sans-serif';
+          ctx.fillStyle = '#fca5a5';
+          ctx.textAlign = 'center';
+          ctx.fillText(st.label || '▼ В глубокий ярус', st.x + st.w * 0.5, st.y + st.h + 12);
+        }
+        ctx.restore();
+      });
+    }
+
+    // 9. Doors & Portcullises & Secret Stone Passages
+    if (dc.doors) {
+      dc.doors.forEach(d => {
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        if (d.type === 'secret_stone') {
+          ctx.fillStyle = '#3f3f46';
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(-4, -d.width * 0.5, 8, d.width);
+          ctx.strokeRect(-4, -d.width * 0.5, 8, d.width);
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 9px system-ui';
+          ctx.textAlign = 'center';
+          ctx.fillText('✦', 0, 3);
+        } else if (d.type === 'iron_portcullis' || d.type === 'iron_grate') {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(0, -d.width * 0.5);
+          ctx.lineTo(0, d.width * 0.5);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = d.isOpen ? '#92400e' : '#451a03';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 2;
+          ctx.fillRect(-3, -d.width * 0.5, 6, d.width);
+          ctx.strokeRect(-3, -d.width * 0.5, 6, d.width);
+        }
+        ctx.restore();
+      });
+    }
+
+    // 10. Fiery Dungeon Braziers
     if (dc.braziers) {
       dc.braziers.forEach(b => {
         ctx.save();
-        ctx.fillStyle = '#f97316';
-        ctx.shadowColor = '#ea580c';
-        ctx.shadowBlur = 18;
+        // Warm ambient light
+        const bGrad = ctx.createRadialGradient(b.x, b.y, 4, b.x, b.y, cs * 4.5);
+        bGrad.addColorStop(0, 'rgba(251, 146, 60, 0.7)');
+        bGrad.addColorStop(0.5, 'rgba(249, 115, 22, 0.25)');
+        bGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = bGrad;
         ctx.beginPath();
-        ctx.arc(b.x, b.y, 7, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, cs * 4.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Iron Bowl
+        ctx.fillStyle = '#18181b';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, cs * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Burning Fire
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, cs * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, cs * 0.12, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       });
     }
+
+    // Room Tactical Name Labels
+    dc.rooms.forEach(rm => {
+      if (rm.name) {
+        ctx.save();
+        ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+        ctx.fillStyle = 'rgba(244, 244, 245, 0.75)';
+        ctx.textAlign = 'center';
+        ctx.fillText(rm.name, rm.x + rm.w * 0.5, rm.y + 16);
+        ctx.restore();
+      }
+    });
 
     ctx.restore();
   }
@@ -2918,24 +4335,59 @@ export class BattlemapRenderer {
   renderArchipelago(ctx, map, W, H) {
     const ad = map.archipelagoData;
     if (!ad) return;
+    const cs = map.grid.cellSize;
 
     ctx.save();
-    ctx.fillStyle = '#0284c7';
+    // 1. Deep tropical ocean water
+    const oGrad = ctx.createLinearGradient(0, 0, W, H);
+    oGrad.addColorStop(0, '#0284c7');
+    oGrad.addColorStop(1, '#0369a1');
+    ctx.fillStyle = oGrad;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    // Ocean Waves
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
     ctx.lineWidth = 1.5;
-    for (let y = 30; y < H; y += 45) {
-      for (let x = 20; x < W; x += 120) {
+    for (let y = 30; y < H; y += 50) {
+      for (let x = 20; x < W; x += 110) {
         ctx.beginPath();
-        ctx.arc(x, y, 15, 0, Math.PI * 0.6);
+        ctx.arc(x, y, 16, 0, Math.PI * 0.5);
         ctx.stroke();
       }
     }
 
+    // 2. Walkable Shallow Sandbars (Отмели / Броды)
+    if (ad.sandbars) {
+      ad.sandbars.forEach(sb => {
+        ctx.save();
+        // Turquoise shallows
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+        ctx.lineWidth = sb.width + 16;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(sb.x1, sb.y1);
+        ctx.lineTo(sb.x2, sb.y2);
+        ctx.stroke();
+
+        // Sandy bar
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = sb.width;
+        ctx.stroke();
+
+        // Sandbar label
+        ctx.font = 'bold 10px system-ui, -apple-system, sans-serif';
+        ctx.fillStyle = '#78350f';
+        ctx.textAlign = 'center';
+        ctx.fillText(sb.name || 'Брод', (sb.x1 + sb.x2) * 0.5, (sb.y1 + sb.y2) * 0.5 - 6);
+        ctx.restore();
+      });
+    }
+
+    // 3. Islands
     ad.islands.forEach(isl => {
       ctx.save();
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
+      // Shallow Turquoise Water Ring (Fresnel edge)
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';
       ctx.beginPath();
       isl.points.forEach((p, idx) => {
         const dx = (p.x - isl.cx) * 1.35 + isl.cx;
@@ -2946,8 +4398,9 @@ export class BattlemapRenderer {
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = '#fde047';
-      ctx.strokeStyle = '#eab308';
+      // Golden Sand Beach
+      ctx.fillStyle = isl.isVolcanic ? '#475569' : '#fde047';
+      ctx.strokeStyle = isl.isVolcanic ? '#1e293b' : '#ca8a04';
       ctx.lineWidth = 3;
       ctx.beginPath();
       isl.points.forEach((p, idx) => {
@@ -2958,7 +4411,8 @@ export class BattlemapRenderer {
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = '#22c55e';
+      // Lush Interior Tropical Jungle
+      ctx.fillStyle = isl.isVolcanic ? '#334155' : '#15803d';
       ctx.beginPath();
       isl.points.forEach((p, idx) => {
         const dx = (p.x - isl.cx) * 0.65 + isl.cx;
@@ -2969,35 +4423,122 @@ export class BattlemapRenderer {
       ctx.closePath();
       ctx.fill();
 
+      // Palm Trees
       if (isl.palms) {
         isl.palms.forEach(pl => {
           ctx.save();
+          // Palm trunk
           ctx.strokeStyle = '#a16207';
           ctx.lineWidth = 4;
           ctx.beginPath();
           ctx.moveTo(pl.x, pl.y);
-          ctx.lineTo(pl.x + 8, pl.y - 12);
+          ctx.quadraticCurveTo(pl.x + 4, pl.y - 6, pl.x + 8, pl.y - 14);
           ctx.stroke();
 
-          ctx.fillStyle = '#15803d';
+          // Palm fronds
           const topX = pl.x + 8;
-          const topY = pl.y - 12;
+          const topY = pl.y - 14;
+          ctx.fillStyle = '#22c55e';
           for (let a = 0; a < Math.PI * 2; a += Math.PI / 3) {
             ctx.beginPath();
-            ctx.arc(topX + Math.cos(a) * 10, topY + Math.sin(a) * 10, 8, 0, Math.PI * 2);
+            ctx.arc(topX + Math.cos(a) * (pl.size * 0.45), topY + Math.sin(a) * (pl.size * 0.45), pl.size * 0.35, 0, Math.PI * 2);
             ctx.fill();
           }
+          // Palm heart
+          ctx.fillStyle = '#166534';
+          ctx.beginPath();
+          ctx.arc(topX, topY, 4, 0, Math.PI * 2);
+          ctx.fill();
           ctx.restore();
         });
       }
+
+      // Campfire on Main Island
+      if (isl.hasCampfire) {
+        ctx.save();
+        const cfX = isl.cx - cs * 0.5;
+        const cfY = isl.cy;
+        const cfGrad = ctx.createRadialGradient(cfX, cfY, 3, cfX, cfY, cs * 2.5);
+        cfGrad.addColorStop(0, 'rgba(251, 146, 60, 0.8)');
+        cfGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
+        ctx.fillStyle = cfGrad;
+        ctx.beginPath();
+        ctx.arc(cfX, cfY, cs * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ea580c';
+        ctx.beginPath();
+        ctx.arc(cfX, cfY, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Island Name
+      ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+      ctx.fillStyle = '#1e293b';
+      ctx.textAlign = 'center';
+      ctx.fillText(isl.name, isl.cx, isl.cy - isl.ry * 0.8);
       ctx.restore();
     });
 
+    // 4. Hanging Rope Suspension Bridge
+    if (ad.ropeBridge) {
+      const rb = ad.ropeBridge;
+      ctx.save();
+      // Main support ropes
+      ctx.strokeStyle = '#78350f';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(rb.x1, rb.y1 - 6);
+      ctx.lineTo(rb.x2, rb.y2 - 6);
+      ctx.moveTo(rb.x1, rb.y1 + 6);
+      ctx.lineTo(rb.x2, rb.y2 + 6);
+      ctx.stroke();
+
+      // Wooden bridge treads
+      const dist = Math.hypot(rb.x2 - rb.x1, rb.y2 - rb.y1);
+      const numPlanks = Math.floor(dist / 8);
+      for (let i = 0; i <= numPlanks; i++) {
+        const t = i / numPlanks;
+        const px = rb.x1 + (rb.x2 - rb.x1) * t;
+        const py = rb.y1 + (rb.y2 - rb.y1) * t;
+        ctx.fillStyle = '#b45309';
+        ctx.strokeStyle = '#451a03';
+        ctx.lineWidth = 1;
+        ctx.fillRect(px - 2, py - 7, 4, 14);
+        ctx.strokeRect(px - 2, py - 7, 4, 14);
+      }
+      ctx.restore();
+    }
+
+    // 5. Reefs
+    if (ad.reefs) {
+      ad.reefs.forEach(rf => {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.beginPath();
+        ctx.arc(rf.x, rf.y, rf.r * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#334155';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(rf.x, rf.y, rf.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    // 6. Smashed Shipwreck
     if (ad.shipwreck) {
       const sw = ad.shipwreck;
       ctx.save();
       ctx.translate(sw.x, sw.y);
       ctx.rotate(sw.angle);
+
+      // Broken wooden hull
       ctx.fillStyle = '#78350f';
       ctx.strokeStyle = '#451a03';
       ctx.lineWidth = 3;
@@ -3006,12 +4547,60 @@ export class BattlemapRenderer {
       ctx.fill();
       ctx.stroke();
 
+      // Shattered ribs
       ctx.strokeStyle = '#451a03';
-      ctx.lineWidth = 5;
+      ctx.lineWidth = 2.5;
+      for (let r = -sw.length * 0.4; r <= sw.length * 0.4; r += 14) {
+        ctx.beginPath();
+        ctx.moveTo(r, -sw.width * 0.55);
+        ctx.lineTo(r, sw.width * 0.55);
+        ctx.stroke();
+      }
+
+      // Snapped mast
+      ctx.strokeStyle = '#92400e';
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(-10, 0); ctx.lineTo(sw.length * 0.4, 15);
+      ctx.moveTo(-10, 0);
+      ctx.lineTo(sw.length * 0.4, 20);
       ctx.stroke();
       ctx.restore();
+    }
+
+    // 7. Giant Kraken Tentacles
+    if (ad.tentacles) {
+      ad.tentacles.forEach(t => {
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.angle);
+
+        // Foaming water whirlpool
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.beginPath();
+        ctx.arc(0, 0, t.thickness * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Writhing purple tentacle
+        ctx.fillStyle = '#86198f';
+        ctx.strokeStyle = '#4a044e';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(-t.thickness * 0.5, 0);
+        ctx.quadraticCurveTo(t.thickness * 0.8, -t.length * 0.5, 0, -t.length);
+        ctx.quadraticCurveTo(-t.thickness * 0.3, -t.length * 0.5, t.thickness * 0.5, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // White sucker cups
+        ctx.fillStyle = '#fdf4ff';
+        for (let s = 10; s < t.length - 10; s += 12) {
+          ctx.beginPath();
+          ctx.arc(t.thickness * 0.35, -s, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      });
     }
 
     ctx.restore();
@@ -3020,23 +4609,25 @@ export class BattlemapRenderer {
   renderShips(ctx, map, W, H) {
     const sd = map.shipsData;
     if (!sd) return;
+    const cs = map.grid.cellSize;
 
     ctx.save();
+    // 1. Deep Ocean Background
     ctx.fillStyle = '#0369a1';
     ctx.fillRect(0, 0, W, H);
 
-    ctx.strokeStyle = '#e0f2fe';
+    // Dynamic wave ripples & foam
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
     ctx.lineWidth = 1.5;
-    ctx.globalAlpha = 0.35;
-    for (let y = 20; y < H; y += 40) {
-      for (let x = 30; x < W; x += 100) {
+    for (let y = 20; y < H; y += 45) {
+      for (let x = 20; x < W; x += 110) {
         ctx.beginPath();
-        ctx.arc(x, y, 12, 0, Math.PI * 0.5);
+        ctx.arc(x, y, 14, 0, Math.PI * 0.5);
         ctx.stroke();
       }
     }
-    ctx.globalAlpha = 1.0;
 
+    // 2. Render each ship
     sd.ships.forEach(ship => {
       ctx.save();
       ctx.translate(ship.x, ship.y);
@@ -3045,69 +4636,141 @@ export class BattlemapRenderer {
       const L = ship.length;
       const Wd = ship.width;
 
-      ctx.fillStyle = ship.woodColor;
+      // Foaming water wake around hull
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, L * 0.54, Wd * 0.56, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Outer Wooden Hull
+      ctx.fillStyle = ship.woodColor || '#78350f';
       ctx.strokeStyle = '#451a03';
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(-L * 0.48, -Wd * 0.35);
-      ctx.lineTo(L * 0.2, -Wd * 0.48);
-      ctx.lineTo(L * 0.5, 0);
-      ctx.lineTo(L * 0.2, Wd * 0.48);
-      ctx.lineTo(-L * 0.48, Wd * 0.35);
+      // Bow
+      ctx.moveTo(-L * 0.5, 0);
+      ctx.bezierCurveTo(-L * 0.45, -Wd * 0.46, -L * 0.1, -Wd * 0.5, L * 0.38, -Wd * 0.44);
+      // Stern
+      ctx.lineTo(L * 0.48, -Wd * 0.32);
+      ctx.lineTo(L * 0.48, Wd * 0.32);
+      // Port side
+      ctx.lineTo(L * 0.38, Wd * 0.44);
+      ctx.bezierCurveTo(-L * 0.1, Wd * 0.5, -L * 0.45, Wd * 0.46, -L * 0.5, 0);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = ship.deckColor;
+      // Bowsprit pole at front
+      ctx.strokeStyle = '#78350f';
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.rect(-L * 0.44, -Wd * 0.38, L * 0.88, Wd * 0.76);
+      ctx.moveTo(-L * 0.48, 0);
+      ctx.lineTo(-L * 0.65, 0);
+      ctx.stroke();
+
+      // Inner Wooden Deck
+      ctx.fillStyle = ship.deckColor || '#b45309';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, L * 0.44, Wd * 0.38, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = '#78350f';
+      // Deck Planking lines
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
       ctx.lineWidth = 1;
-      for (let py = -Wd * 0.35; py <= Wd * 0.35; py += 10) {
+      for (let py = -Wd * 0.32; py <= Wd * 0.32; py += 10) {
         ctx.beginPath();
-        ctx.moveTo(-L * 0.44, py);
+        ctx.moveTo(-L * 0.4, py);
         ctx.lineTo(L * 0.4, py);
         ctx.stroke();
       }
 
+      // Forecastle & Quarterdeck Bulkhead Dividers
       ctx.strokeStyle = '#451a03';
       ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(-L * 0.2, -Wd * 0.38); ctx.lineTo(-L * 0.2, Wd * 0.38); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(L * 0.25, -Wd * 0.38); ctx.lineTo(L * 0.25, Wd * 0.38); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-L * 0.22, -Wd * 0.36); ctx.lineTo(-L * 0.22, Wd * 0.36);
+      ctx.moveTo(L * 0.22, -Wd * 0.36); ctx.lineTo(L * 0.22, Wd * 0.36);
+      ctx.stroke();
 
+      // Cargo Hatches
       if (ship.hatches) {
         ship.hatches.forEach(h => {
           ctx.fillStyle = '#451a03';
           ctx.fillRect(h.relX - h.w * 0.5, h.relY - h.h * 0.5, h.w, h.h);
-          ctx.strokeStyle = '#b45309';
-          ctx.lineWidth = 1.5;
+          // Grating mesh
+          ctx.strokeStyle = '#ca8a04';
+          ctx.lineWidth = 1.2;
           ctx.strokeRect(h.relX - h.w * 0.5, h.relY - h.h * 0.5, h.w, h.h);
+          for (let gx = h.relX - h.w * 0.5 + 4; gx < h.relX + h.w * 0.5; gx += 6) {
+            ctx.beginPath(); ctx.moveTo(gx, h.relY - h.h * 0.5); ctx.lineTo(gx, h.relY + h.h * 0.5); ctx.stroke();
+          }
         });
       }
 
+      // Broadside Cannons
       if (ship.cannons) {
         ship.cannons.forEach(can => {
+          ctx.save();
+          // Cannon Carriage (Wooden 4-wheel base)
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(can.relX - 6, can.relY - (can.side === 'port' ? 0 : 8), 12, 8);
+
+          // Black Iron Barrel
           ctx.fillStyle = '#18181b';
-          const canL = map.grid.cellSize * 0.7;
-          const canW = map.grid.cellSize * 0.25;
+          const canLen = cs * 0.75;
+          const canW = cs * 0.25;
           const dirY = can.side === 'port' ? -1 : 1;
-          ctx.fillRect(can.relX - canW * 0.5, can.relY, canW, canL * dirY);
+          ctx.fillRect(can.relX - canW * 0.5, can.relY, canW, canLen * dirY);
+          ctx.restore();
         });
       }
 
-      if (ship.helm) {
+      // Capstan & Ship's Helm
+      if (ship.capstan) {
         ctx.fillStyle = '#78350f';
         ctx.strokeStyle = '#451a03';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(ship.helm.relX, ship.helm.relY, map.grid.cellSize * 0.35, 0, Math.PI * 2);
+        ctx.arc(ship.capstan.relX, ship.capstan.relY, ship.capstan.radius, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
       }
 
+      if (ship.helm) {
+        ctx.fillStyle = '#78350f';
+        ctx.strokeStyle = '#eab308';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ship.helm.relX, ship.helm.relY, ship.helm.radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Deck Cargo (Barrels & Ammo Crates)
+      if (ship.clutter) {
+        ship.clutter.forEach(cl => {
+          if (cl.type === 'barrel') {
+            ctx.fillStyle = '#92400e';
+            ctx.strokeStyle = '#451a03';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(cl.relX, cl.relY, cs * 0.28, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          } else if (cl.type === 'crate') {
+            ctx.fillStyle = '#ca8a04';
+            ctx.strokeStyle = '#78350f';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(cl.relX - cl.w * 0.5, cl.relY - cl.h * 0.5, cl.w, cl.h);
+            ctx.strokeRect(cl.relX - cl.w * 0.5, cl.relY - cl.h * 0.5, cl.w, cl.h);
+          }
+        });
+      }
+
+      // Masts & Rigging
       if (ship.masts) {
         ship.masts.forEach(m => {
+          ctx.save();
+          // Cross Yardarm
           ctx.strokeStyle = '#451a03';
           ctx.lineWidth = 4;
           ctx.beginPath();
@@ -3115,28 +4778,41 @@ export class BattlemapRenderer {
           ctx.lineTo(m.relX, m.yardarm * 0.5);
           ctx.stroke();
 
+          // Furled White Canvas Sail
           if (m.sail) {
             ctx.fillStyle = '#fef3c7';
             ctx.strokeStyle = '#d97706';
             ctx.lineWidth = 1.5;
             ctx.beginPath();
-            ctx.rect(m.relX - 4, -m.yardarm * 0.48, 8, m.yardarm * 0.96);
+            ctx.rect(m.relX - 4, -m.yardarm * 0.45, 8, m.yardarm * 0.9);
             ctx.fill();
             ctx.stroke();
           }
 
+          // Mast Center Top
           ctx.fillStyle = '#451a03';
+          ctx.strokeStyle = '#18181b';
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(m.relX, m.relY, m.radius * 25, 0, Math.PI * 2);
+          ctx.arc(m.relX, m.relY, m.radius, 0, Math.PI * 2);
           ctx.fill();
+          ctx.stroke();
+          ctx.restore();
         });
       }
+
+      // Ship Name Banner
+      ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+      ctx.fillStyle = '#fef3c7';
+      ctx.textAlign = 'center';
+      ctx.fillText(ship.name, 0, -Wd * 0.55);
 
       ctx.restore();
     });
 
-    if (map.boardingPlanks) {
-      map.boardingPlanks.forEach(bp => {
+    // 3. Boarding Planks & Gangways
+    if (sd.boardingPlanks) {
+      sd.boardingPlanks.forEach(bp => {
         ctx.save();
         ctx.strokeStyle = '#b45309';
         ctx.lineWidth = bp.width;
@@ -3149,6 +4825,77 @@ export class BattlemapRenderer {
         ctx.strokeStyle = '#451a03';
         ctx.lineWidth = 1.5;
         ctx.stroke();
+
+        // Treads
+        const dist = Math.hypot(bp.x2 - bp.x1, bp.y2 - bp.y1);
+        const steps = Math.floor(dist / 6);
+        for (let s = 0; s <= steps; s++) {
+          const t = s / steps;
+          const px = bp.x1 + (bp.x2 - bp.x1) * t;
+          const py = bp.y1 + (bp.y2 - bp.y1) * t;
+          ctx.strokeStyle = '#78350f';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(px - 3, py - 4);
+          ctx.lineTo(px + 3, py + 4);
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
+
+    // 4. Grappling Hooks & Taut Lines
+    if (sd.grapplingHooks) {
+      sd.grapplingHooks.forEach(gh => {
+        ctx.save();
+        ctx.strokeStyle = '#fef3c7';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(gh.x1, gh.y1);
+        ctx.lineTo(gh.x2, gh.y2);
+        ctx.stroke();
+
+        // Iron hook
+        ctx.fillStyle = '#18181b';
+        ctx.beginPath();
+        ctx.arc(gh.x2, gh.y2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    // 5. Kraken Tentacles Wrapping Around Ship
+    if (sd.tentacles) {
+      sd.tentacles.forEach(t => {
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.angle);
+
+        // Foaming water
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.beginPath();
+        ctx.arc(0, 0, t.thickness * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Writhing purple tentacle
+        ctx.fillStyle = '#86198f';
+        ctx.strokeStyle = '#4a044e';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(-t.thickness * 0.5, 0);
+        ctx.quadraticCurveTo(t.thickness * 0.8, -t.length * 0.5, 0, -t.length);
+        ctx.quadraticCurveTo(-t.thickness * 0.3, -t.length * 0.5, t.thickness * 0.5, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // White sucker cups
+        ctx.fillStyle = '#fdf4ff';
+        for (let s = 10; s < t.length - 10; s += 12) {
+          ctx.beginPath();
+          ctx.arc(t.thickness * 0.35, -s, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       });
     }
@@ -3168,5 +4915,264 @@ export class BattlemapRenderer {
     }
     const last = points[points.length - 1];
     ctx.lineTo(last.x, last.y);
+  }
+
+  renderTownSquare(ctx, map) {
+    const sq = map.townSquare;
+    ctx.save();
+
+    ctx.fillStyle = '#6b7280';
+    ctx.strokeStyle = '#4b5563';
+    ctx.lineWidth = 1;
+    ctx.fillRect(sq.x, sq.y, sq.w, sq.h);
+    ctx.strokeRect(sq.x, sq.y, sq.w, sq.h);
+
+    const tileSize = 20;
+    ctx.strokeStyle = '#52525b';
+    ctx.lineWidth = 0.8;
+    for (let x = sq.x; x < sq.x + sq.w; x += tileSize) {
+      for (let y = sq.y; y < sq.y + sq.h; y += tileSize) {
+        ctx.strokeRect(x, y, tileSize, tileSize);
+      }
+    }
+
+    ctx.strokeStyle = '#3f3f46';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(sq.x, sq.y, sq.w, sq.h);
+
+    const feat = sq.centerFeature;
+    if (feat) {
+      if (feat.type === 'fountain') {
+        ctx.fillStyle = '#71717a';
+        ctx.strokeStyle = '#27272a';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(feat.x, feat.y, feat.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#0284c7';
+        ctx.beginPath();
+        ctx.arc(feat.x, feat.y, feat.radius * 0.75, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#a1a1aa';
+        ctx.beginPath();
+        ctx.arc(feat.x, feat.y, feat.radius * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(224, 242, 254, 0.75)';
+        ctx.beginPath();
+        ctx.arc(feat.x, feat.y, feat.radius * 0.18, 0, Math.PI * 2);
+        ctx.fill();
+
+      } else if (feat.type === 'statue') {
+        ctx.fillStyle = '#52525b';
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2;
+        ctx.fillRect(feat.x - 20, feat.y - 20, 40, 40);
+        ctx.strokeRect(feat.x - 20, feat.y - 20, 40, 40);
+
+        ctx.fillStyle = '#a1a1aa';
+        ctx.beginPath();
+        ctx.arc(feat.x, feat.y, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+      } else if (feat.type === 'pillory_board') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(feat.x - 24, feat.y - 16, 48, 32);
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(feat.x - 18, feat.y - 4, 36, 8);
+        ctx.fillStyle = '#fef3c7';
+        ctx.fillRect(feat.x - 8, feat.y - 14, 16, 10);
+      }
+    }
+
+    if (sq.marketStalls && sq.marketStalls.length) {
+      for (const st of sq.marketStalls) {
+        ctx.fillStyle = '#78350f';
+        ctx.strokeStyle = '#451a03';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(st.x, st.y, st.w, st.h);
+        ctx.strokeRect(st.x, st.y, st.w, st.h);
+
+        ctx.fillStyle = st.goodsType === 'fruit' ? '#ef4444' : st.goodsType === 'potions' ? '#3b82f6' : '#d97706';
+        ctx.fillRect(st.x + 4, st.y + 4, st.w - 8, st.h - 8);
+
+        ctx.fillStyle = st.color;
+        ctx.fillRect(st.x - 3, st.y - 3, st.w + 6, st.h * 0.5);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(st.x + st.w * 0.25, st.y - 3, st.w * 0.2, st.h * 0.5);
+        ctx.fillRect(st.x + st.w * 0.65, st.y - 3, st.w * 0.2, st.h * 0.5);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  renderCityStreets(ctx, map) {
+    ctx.save();
+    for (const str of map.cityStreets) {
+      ctx.strokeStyle = '#57534e';
+      ctx.lineWidth = str.width;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(str.x1, str.y1);
+      ctx.lineTo(str.x2, str.y2);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#292524';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(str.x1, str.y1);
+      ctx.lineTo(str.x2, str.y2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  renderPalisade(ctx, map) {
+    const p = map.palisade;
+    if (!p) return;
+    ctx.save();
+
+    const stakeR = 4;
+    ctx.fillStyle = '#78350f';
+    ctx.strokeStyle = '#451a03';
+    ctx.lineWidth = 1;
+
+    const drawStakeWall = (x1, y1, x2, y2) => {
+      const d = Math.hypot(x2 - x1, y2 - y1);
+      const count = Math.floor(d / (stakeR * 2));
+      for (let i = 0; i <= count; i++) {
+        const t = i / count;
+        const x = x1 + (x2 - x1) * t;
+        const y = y1 + (y2 - y1) * t;
+        ctx.beginPath();
+        ctx.arc(x, y, stakeR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    };
+
+    drawStakeWall(p.x1, p.y1, p.x2, p.y1);
+    drawStakeWall(p.x1, p.y2, p.x2, p.y2);
+    drawStakeWall(p.x1, p.y1, p.x1, p.y2);
+    drawStakeWall(p.x2, p.y1, p.x2, p.y2);
+
+    if (p.towers) {
+      for (const tw of p.towers) {
+        ctx.fillStyle = '#8f5d22';
+        ctx.strokeStyle = '#3f2206';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(tw.x, tw.y, 16, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#b45309';
+        ctx.beginPath();
+        ctx.arc(tw.x, tw.y, 11, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    if (p.gates) {
+      for (const gt of p.gates) {
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(gt.x - 18, gt.y - 18, 36, 36);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(gt.x - 14, gt.y - 14, 28, 28);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(gt.x - 10, gt.y - 4, 20, 8);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  renderVillageCenter(ctx, map) {
+    const vc = map.villageCenter;
+    if (!vc) return;
+    ctx.save();
+
+    if (vc.hasWell) {
+      ctx.fillStyle = '#6b7280';
+      ctx.strokeStyle = '#1f2937';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(vc.x, vc.y, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#0284c7';
+      ctx.beginPath();
+      ctx.arc(vc.x, vc.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(vc.x - 12, vc.y - 3, 24, 6);
+    }
+
+    if (vc.hasHaystack) {
+      ctx.fillStyle = '#eab308';
+      ctx.strokeStyle = '#854d0e';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(vc.x + 30, vc.y + 10, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    if (vc.hasNoticeBoard) {
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(vc.x - 30, vc.y - 10, 16, 6);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(vc.x - 28, vc.y - 16, 12, 6);
+    }
+
+    ctx.restore();
+  }
+
+  renderVillageFences(ctx, map) {
+    if (!map.villageFences) return;
+    ctx.save();
+
+    ctx.strokeStyle = '#78350f';
+    ctx.lineWidth = 1.5;
+    for (const f of map.villageFences) {
+      ctx.strokeRect(f.x, f.y, f.w, f.h);
+    }
+
+    ctx.restore();
+  }
+
+  renderCityLanterns(ctx, map) {
+    if (!map.cityLanterns) return;
+    ctx.save();
+
+    for (const l of map.cityLanterns) {
+      const grad = ctx.createRadialGradient(l.x, l.y, 2, l.x, l.y, 28);
+      grad.addColorStop(0, 'rgba(253, 224, 71, 0.6)');
+      grad.addColorStop(0.5, 'rgba(245, 158, 11, 0.25)');
+      grad.addColorStop(1, 'rgba(245, 158, 11, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, 28, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#18181b';
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
   }
 }

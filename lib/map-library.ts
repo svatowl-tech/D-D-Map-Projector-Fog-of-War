@@ -61,27 +61,11 @@ function restorePresetDataUrls(locations: SavedMapLocation[]): SavedMapLocation[
 
 /**
  * Инициализирует библиотеку карт синхронно (для мгновенного рендера первого кадра)
+ * Чтобы избежать Hydration Mismatch в SSR, на этапе инициализации стейта всегда
+ * возвращает дефолтные пресеты. Реальная гидрация происходит в useEffect через loadMapLibrary().
  */
 export function initMapLibrary(): SavedMapLocation[] {
-  if (typeof window !== 'undefined') {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return restorePresetDataUrls(parsed);
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to parse saved map library, resetting to defaults', e);
-    }
-  }
-
-  const initial = getDefaultPresetLocations();
-  if (typeof window !== 'undefined') {
-    saveMapLibrary(initial);
-  }
-  return initial;
+  return getDefaultPresetLocations();
 }
 
 /**

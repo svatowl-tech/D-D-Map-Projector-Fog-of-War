@@ -236,25 +236,13 @@ function notifySettingsChange(settings: AppSettings) {
 }
 
 /**
- * Синхронное быстрое чтение (из памяти или localStorage)
+ * Синхронное быстрое получение настроек.
+ * Чтобы избежать Hydration Mismatch в SSR, на этапе инициализации стейта всегда
+ * возвращает дефолтные настройки. Реальная гидрация происходит в useEffect через loadAppSettings().
  */
 export function getInitialSettingsSync(): AppSettings {
   if (cachedSettings) return cachedSettings;
   const defaults = getDefaultSettings();
-  if (typeof window === 'undefined') return defaults;
-
-  try {
-    const raw = localStorage.getItem(APP_SETTINGS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const merged = deepMerge(defaults, parsed) as AppSettings;
-      cachedSettings = merged;
-      return merged;
-    }
-  } catch (err) {
-    console.warn('[Settings] Failed to parse local settings:', err);
-  }
-
   cachedSettings = defaults;
   return defaults;
 }
