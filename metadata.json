@@ -1,6 +1,6 @@
 {
   "name": "D&D Map Projector & Fog of War",
-  "description": "Ultra-lightweight live tabletop RPG map & video projector with real-time Fog of War synchronization, grid overlay, and dual-window DM/Player views.",
+  "description": "Ultra-lightweight live tabletop RPG map & video projector with Photoshop-like dynamic map drawing tools (fire, water, fog/gas, laser pointer, attention beacons), real-time Fog of War, and dual-window sync.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

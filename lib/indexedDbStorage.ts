@@ -240,6 +240,7 @@ export async function getAllVaultPresets(): Promise<VaultPreset[]> {
  * Сохраняет системное свойство настроек
  */
 export async function saveSetting(key: string, value: any): Promise<void> {
+  if (typeof window === 'undefined') return;
   const db = await getDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['settings'], 'readwrite');
@@ -255,6 +256,7 @@ export async function saveSetting(key: string, value: any): Promise<void> {
  * Читает системное свойство настроек
  */
 export async function getSetting<T = any>(key: string): Promise<T | null> {
+  if (typeof window === 'undefined') return null;
   const db = await getDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['settings'], 'readonly');

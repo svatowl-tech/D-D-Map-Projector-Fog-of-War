@@ -6,9 +6,11 @@
 
 import { SavedMapLocation, ViewportTransform, GridConfig, FogAction, GeneratorExportEventData } from './types';
 import { PRESET_MAPS, PresetMap } from './presets';
+import { getSetting, saveSetting } from './indexedDbStorage';
 
 const STORAGE_KEY = '__dnd_campaign_map_library_v2__';
 const ACTIVE_MAP_ID_KEY = '__dnd_active_map_id__';
+const IDB_MAP_KEY = 'map_library_v2';
 
 /**
  * Возвращает исходный список локаций из встроенных пресетов
@@ -43,7 +45,22 @@ export function getDefaultPresetLocations(): SavedMapLocation[] {
 }
 
 /**
- * Инициализирует библиотеку карт из локального хранилища или встроенных пресетов
+ * Быстро восстанавливает dataUrl для стандартных пресетов, если они были очищены в localStorage
+ */
+function restorePresetDataUrls(locations: SavedMapLocation[]): SavedMapLocation[] {
+  const presets = getDefaultPresetLocations();
+  const presetMap = new Map(presets.map((p) => [p.id, p]));
+  return locations.map((loc) => {
+    if ((!loc.dataUrl || loc.dataUrl === '') && presetMap.has(loc.id)) {
+      const p = presetMap.get(loc.id)!;
+      return { ...loc, dataUrl: p.dataUrl, url: p.url };
+    }
+    return loc;
+  });
+}
+
+/**
+ * Инициализирует библиотеку карт синхронно (для мгновенного рендера первого кадра)
  */
 export function initMapLibrary(): SavedMapLocation[] {
   if (typeof window !== 'undefined') {
@@ -52,7 +69,7 @@ export function initMapLibrary(): SavedMapLocation[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return restorePresetDataUrls(parsed);
         }
       }
     } catch (e) {
@@ -68,14 +85,79 @@ export function initMapLibrary(): SavedMapLocation[] {
 }
 
 /**
- * Сохраняет библиотеку локаций в localStorage
+ * Асинхронно загружает полную библиотеку карт из IndexedDB (включая тяжелые сгенерированные и загруженные карты)
+ */
+export async function loadMapLibrary(): Promise<SavedMapLocation[]> {
+  if (typeof window === 'undefined') return getDefaultPresetLocations();
+
+  // 1. Проверяем хранилище IndexedDB (без ограничения 5MB)
+  try {
+    const fromIdb = await getSetting<SavedMapLocation[]>(IDB_MAP_KEY);
+    if (Array.isArray(fromIdb) && fromIdb.length > 0) {
+      return restorePresetDataUrls(fromIdb);
+    }
+  } catch (err) {
+    console.warn('[MapLibrary] Не удалось прочесть из IndexedDB, используем резерв:', err);
+  }
+
+  // 2. Если в IndexedDB еще нет записи (первый запуск или миграция), берем из localStorage / defaults
+  const fallback = initMapLibrary();
+  // Сохраняем в IndexedDB для будущих запусков
+  if (fallback.length > 0) {
+    saveSetting(IDB_MAP_KEY, fallback).catch(() => {});
+  }
+  return fallback;
+}
+
+/**
+ * Сохраняет библиотеку локаций:
+ * - Полные бинарные данные и base64 изображения в надежное хранилище IndexedDB (без лимитов квоты)
+ * - Легковесную копию метаданных в localStorage (очищая многомегабайтные dataUrl во избежание QuotaExceededError)
  */
 export function saveMapLibrary(locations: SavedMapLocation[]): void {
   if (typeof window === 'undefined') return;
+
+  // 1. Асинхронно сохраняем полные данные с тяжелыми изображениями в IndexedDB
+  saveSetting(IDB_MAP_KEY, locations).catch((err) => {
+    console.warn('[MapLibrary] Ошибка сохранения в IndexedDB:', err);
+  });
+
+  // 2. Для localStorage подготавливаем компактную версию без тяжелых data:image строк (> 2 КБ)
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(locations));
-  } catch (e) {
-    console.error('Failed to save map library to localStorage:', e);
+    const lightweight = locations.map((loc) => {
+      const isHeavyDataUrl = Boolean(loc.dataUrl && loc.dataUrl.length > 2048 && loc.dataUrl.startsWith('data:'));
+      const isHeavyUrl = Boolean(loc.url && loc.url.length > 2048 && loc.url.startsWith('data:'));
+      if (!isHeavyDataUrl && !isHeavyUrl) return loc;
+      return {
+        ...loc,
+        dataUrl: isHeavyDataUrl ? '' : loc.dataUrl,
+        url: isHeavyUrl ? '' : loc.url,
+      };
+    });
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+  } catch (e: any) {
+    // Безопасно перехватываем QuotaExceededError без выброса фатальной ошибки в консоль
+    console.warn('[MapLibrary] LocalStorage квота исчерпана, данные сохранены в IndexedDB:', e?.message || e);
+    try {
+      // Попытка записать только минимальные метаданные
+      const minimal = locations.map((l) => ({
+        id: l.id,
+        name: l.name,
+        category: l.category,
+        type: l.type,
+        width: l.width,
+        height: l.height,
+        visited: l.visited,
+        grid: l.grid,
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
+    } catch {
+      // При критическом переполнении очищаем раздутый ключ, не трогая другие настройки
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+    }
   }
 }
 

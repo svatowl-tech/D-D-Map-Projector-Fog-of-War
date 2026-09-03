@@ -48,8 +48,15 @@ export class SyncController {
     if (this.isDestroyed) return;
     // Дедупликация сообщений для предотвращения двойного срабатывания
     if (msg.timestamp && msg.timestamp <= this.lastProcessedTimestamp) {
-      // Исключаем HEARTBEAT и PING от дедупликации только если они идентичны по времени
-      if (msg.type !== 'PING' && msg.type !== 'HEARTBEAT') {
+      // Исключаем HEARTBEAT, PING, LASER_SYNC, ATTENTION_BEACON и MAP_FX_STROKE от дедупликации
+      const isHighFrequencyMsg =
+        msg.type === 'PING' ||
+        msg.type === 'HEARTBEAT' ||
+        msg.type === 'LASER_SYNC' ||
+        msg.type === 'ATTENTION_BEACON' ||
+        msg.type === 'MAP_FX_STROKE';
+
+      if (!isHighFrequencyMsg) {
         return;
       }
     }

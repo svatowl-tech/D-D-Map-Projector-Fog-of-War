@@ -30,6 +30,7 @@ import { FogEngine } from '@/lib/fog-engine';
 import { PRESET_MAPS } from '@/lib/presets';
 import {
   initMapLibrary,
+  loadMapLibrary,
   saveMapLibrary,
   getActiveMapId,
   saveActiveMapId,
@@ -49,6 +50,23 @@ import { audioService } from '@/lib/audio/audio-engine';
 import { scanFilesToPlaylists } from '@/lib/audio/folder-scanner';
 import { processUploadedFiles } from '@/lib/fsSync';
 import { CampaignCard } from '@/lib/dnd-engine/types';
+import { AudioEngineState } from '@/lib/audio/types';
+import { AppSettingsModal } from '@/components/settings/AppSettingsModal';
+import { AppSettings, getInitialSettingsSync, loadAppSettings } from '@/lib/appSettings';
+import { PhotoshopMapToolbar } from '@/components/dm/PhotoshopMapToolbar';
+import {
+  GasVariant,
+  WaterVariant,
+  LaserColor,
+  AttentionStyle,
+  SpellShapeType,
+  MapFxStroke,
+  SpellZoneArea,
+  LaserPointerState,
+  AttentionBeacon,
+} from '@/lib/map-canvas-engine/types';
+import { MapFxEngine } from '@/lib/map-canvas-engine/MapFxEngine';
+import { playAttentionBeep } from '@/lib/audio/alertSound';
 import {
   Eye,
   EyeOff,
@@ -89,6 +107,7 @@ import {
   PinOff,
   ChevronUp,
   ChevronDown,
+  RefreshCw,
   X,
   Map as MapIcon,
   Tv,
@@ -96,6 +115,12 @@ import {
   Crosshair,
   MonitorPlay,
   Music,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  SkipForward,
+  Settings,
 } from 'lucide-react';
 
 interface DMViewProps {
@@ -104,13 +129,23 @@ interface DMViewProps {
 
 export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   // --- Состояния библиотеки карт и локаций ---
-  const [mapLocations, setMapLocations] = useState<SavedMapLocation[]>(() => getDefaultPresetLocations());
+  const [mapLocations, setMapLocations] = useState<SavedMapLocation[]>(() => initMapLibrary());
   const [activeLocationId, setActiveLocationId] = useState<string | null>(() => {
     const defaultList = getDefaultPresetLocations();
     return defaultList[0] ? defaultList[0].id : null;
   });
   const [isMapLibraryOpen, setIsMapLibraryOpen] = useState<boolean>(false);
   const [isAudioPlayerOpen, setIsAudioPlayerOpen] = useState<boolean>(false);
+  const [audioEngineState, setAudioEngineState] = useState<AudioEngineState>(() => audioService.getState());
+
+  useEffect(() => {
+    const unsub = audioService.subscribe((state) => {
+      setAudioEngineState(state);
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
 
   // --- Состояния медиа и карты на столе ---
   const [media, setMedia] = useState<MediaState>(() => {
@@ -188,9 +223,40 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     offsetY: 0,
   });
 
+  // Автоматическая синхронизация конфигурации сетки с экраном игроков
+  useEffect(() => {
+    syncRef.current?.send({
+      type: 'GRID_CONFIG',
+      payload: grid,
+      timestamp: Date.now(),
+    });
+  }, [grid]);
+
+  // --- Состояние Калибровки Сетки (Grid Matcher) ---
+  const [calibrationCellCount, setCalibrationCellCount] = useState<number>(1);
+  const [calibrationDrag, setCalibrationDrag] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    isDragging: boolean;
+  } | null>(null);
+
   // --- История действий тумана для синхронизации и повтора ---
   const fogActionsRef = useRef<FogAction[]>([]);
   const [, setFogActionCounter] = useState<number>(0);
+
+  // --- Состояние системных настроек AetherMap OS ---
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => getInitialSettingsSync());
+  const [isAppSettingsOpen, setIsAppSettingsOpen] = useState<boolean>(false);
+  const appSettingsRef = useRef(appSettings);
+  useEffect(() => { appSettingsRef.current = appSettings; }, [appSettings]);
+
+  useEffect(() => {
+    loadAppSettings().then((loaded) => {
+      setAppSettings(loaded);
+    });
+  }, []);
 
   // --- Статус синхронизации ---
   const [playerConnected, setPlayerConnected] = useState<boolean>(false);
@@ -222,13 +288,52 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   });
   const [activePings, setActivePings] = useState<PingMarker[]>([]);
 
+  // --- Состояния интерактивных инструментов рисования карты (Photoshop Map FX) ---
+  const [gasVariant, setGasVariant] = useState<GasVariant>('poison');
+  const [waterVariant, setWaterVariant] = useState<WaterVariant>('ocean');
+  const [laserColor, setLaserColor] = useState<LaserColor>('#ff2a2a');
+  const [attentionText, setAttentionText] = useState<string>('');
+  const [attentionStyle, setAttentionStyle] = useState<AttentionStyle>('beacon');
+  const [soundAlertEnabled, setSoundAlertEnabled] = useState<boolean>(true);
+  const [markerColor, setMarkerColor] = useState<string>('#38bdf8');
+  const [spellShape, setSpellShape] = useState<SpellShapeType>('circle');
+  const [spellRadius, setSpellRadius] = useState<number>(20);
+  const [spellLabel, setSpellLabel] = useState<string>('Fireball');
+  const [spellColor, setSpellColor] = useState<string>('#ef4444');
+  const [fxStrokesCount, setFxStrokesCount] = useState<number>(0);
+
   // --- Ссылки на DOM и движки ---
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const fogCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fogEngineRef = useRef<FogEngine | null>(null);
+  const mapFxCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mapFxEngineRef = useRef<MapFxEngine | null>(null);
   const syncRef = useRef<SyncController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Временные рефы для рисования эффектов карты
+  const isDrawingFxRef = useRef<boolean>(false);
+  const currentFxPointsRef = useRef<{ x: number; y: number }[]>([]);
+  const currentFxIdRef = useRef<string>('');
+  const activeLaserRef = useRef<LaserPointerState | null>(null);
+  const spellZoneStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleAppSettingsChange = useCallback((newSettings: AppSettings) => {
+    setAppSettings(newSettings);
+    syncRef.current?.send({
+      type: 'SETTINGS_SYNC',
+      payload: {
+        brightness: newSettings.playerDisplay.brightness,
+        contrast: newSettings.playerDisplay.contrast,
+        invertColors: newSettings.playerDisplay.invertColors,
+        blackout: newSettings.playerDisplay.blackout,
+        showGridOnPlayer: newSettings.playerDisplay.showGridOnPlayer,
+        showPingsOnPlayer: newSettings.playerDisplay.showPingsOnPlayer,
+      },
+      timestamp: Date.now(),
+    });
+  }, []);
 
   // Флаги интерактивности мыши
   const isDraggingRef = useRef<boolean>(false);
@@ -244,10 +349,65 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     setTimeout(() => setToastMessage((prev) => (prev === msg ? null : prev)), durationMs);
   }, []);
 
-  // Инициализация библиотеки карт и восстановление состояния из localStorage при маунте на клиенте
+  // Вычисление метрик калибровки сетки
+  const getCalibrationMetrics = useCallback(() => {
+    if (!calibrationDrag) return null;
+    const { startX, startY, currentX, currentY } = calibrationDrag;
+    const boxW = Math.abs(currentX - startX);
+    const boxH = Math.abs(currentY - startY);
+    const boxSize = Math.max(boxW, boxH);
+    if (boxSize < 4) return null;
+
+    const minX = Math.min(startX, currentX);
+    const minY = Math.min(startY, currentY);
+
+    const cellSize = Math.round((boxSize / calibrationCellCount) * 10) / 10;
+    if (cellSize < 4) return null;
+
+    const offsetX = Math.round(minX % cellSize);
+    const offsetY = Math.round(minY % cellSize);
+
+    return {
+      minX,
+      minY,
+      boxSize,
+      cellSize,
+      offsetX,
+      offsetY,
+      cellsCount: calibrationCellCount,
+    };
+  }, [calibrationDrag, calibrationCellCount]);
+
+  // Применение результатов калибровки
+  const handleApplyCalibration = useCallback(() => {
+    const metrics = getCalibrationMetrics();
+    if (!metrics) {
+      showToast('Сначала зажмите ЛКМ и выделите клетку на карте');
+      return;
+    }
+
+    setGrid((prev) => ({
+      ...prev,
+      enabled: true,
+      size: metrics.cellSize,
+      offsetX: metrics.offsetX,
+      offsetY: metrics.offsetY,
+    }));
+
+    showToast(
+      `✅ Сетка успешно сопоставлена! Размер клетки: ${metrics.cellSize}px (Смещение: X:${metrics.offsetX}px, Y:${metrics.offsetY}px)`
+    );
+
+    setCalibrationDrag(null);
+    setBrushMode('pan');
+  }, [getCalibrationMetrics, showToast]);
+
+  // Асинхронная гидрация полной библиотеки карт из IndexedDB при маунте на клиенте
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const library = initMapLibrary();
+    let isMounted = true;
+
+    loadMapLibrary().then((library) => {
+      if (!isMounted || !library || library.length === 0) return;
       setMapLocations(library);
 
       const savedId = getActiveMapId();
@@ -270,11 +430,14 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         }
         setIsFogBaseFilled(targetLoc.isFogBaseFilled ?? false);
       }
-    }, 0);
-    return () => clearTimeout(timer);
+    });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // 1. Инициализация движка тумана
+  // 1. Инициализация движка тумана и движка визуальных эффектов карты (MapFxEngine)
   useEffect(() => {
     if (fogCanvasRef.current) {
       fogEngineRef.current = new FogEngine(fogCanvasRef.current, true);
@@ -289,6 +452,15 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         fogEngineRef.current.replayActions(fogActionsRef.current, isFogBaseFilled);
       }
     }
+
+    if (mapFxCanvasRef.current) {
+      mapFxEngineRef.current = new MapFxEngine(mapFxCanvasRef.current);
+      mapFxEngineRef.current.resize(media.width, media.height);
+    }
+
+    return () => {
+      mapFxEngineRef.current?.destroy();
+    };
   }, []);
 
   // 2. Обновление прозрачности тумана мастера
@@ -319,11 +491,26 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           fogBaseFilled: isFogBaseFilledRef.current,
           projectedCard: projectedCardRef.current,
           pinnedTableCards: pinnedCardsRef.current,
+          mapFxStrokes: mapFxEngineRef.current?.strokes || [],
+          spellZones: mapFxEngineRef.current?.spellZones || [],
         };
 
         syncRef.current?.send({
           type: 'DM_STATE_FULL',
           payload: fullState,
+          timestamp: Date.now(),
+        });
+
+        syncRef.current?.send({
+          type: 'SETTINGS_SYNC',
+          payload: {
+            brightness: appSettingsRef.current.playerDisplay.brightness,
+            contrast: appSettingsRef.current.playerDisplay.contrast,
+            invertColors: appSettingsRef.current.playerDisplay.invertColors,
+            blackout: appSettingsRef.current.playerDisplay.blackout,
+            showGridOnPlayer: appSettingsRef.current.playerDisplay.showGridOnPlayer,
+            showPingsOnPlayer: appSettingsRef.current.playerDisplay.showPingsOnPlayer,
+          },
           timestamp: Date.now(),
         });
       } else if (msg.type === 'PLAYER_VIEWPORT_INFO') {
@@ -390,7 +577,9 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
 
   // 4. Инициализация синхронизации BroadcastChannel
   useEffect(() => {
-    syncRef.current = new SyncController(handleIncomingMessage);
+    const controller = new SyncController(handleIncomingMessage);
+    // eslint-disable-next-line react-hooks/immutability
+    syncRef.current = controller;
 
     // Периодический пинг
     const heartbeatInterval = setInterval(() => {
@@ -508,7 +697,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         });
       }
 
-      showToast(`Карта загружена: ${name}`);
+      showToast(`Карта загружена: "${name}" [Нажмите 📐 Калибровка сетки]`);
     },
     [fitMapToScreen, showToast]
   );
@@ -1178,7 +1367,69 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     [viewport.scale, media.width, media.height]
   );
 
-  // 15. Обработка мыши: Панорамирование, Кисть тумана, Пинг, Измерение
+  // Хелперы управления эффектами Photoshop Map FX
+  const handleUndoLastFx = useCallback(() => {
+    if (mapFxEngineRef.current) {
+      mapFxEngineRef.current.removeLastStroke();
+      setFxStrokesCount(mapFxEngineRef.current.strokes.length);
+      syncRef.current?.send({
+        type: 'MAP_FX_SYNC',
+        payload: {
+          strokes: mapFxEngineRef.current.strokes,
+          spellZones: mapFxEngineRef.current.spellZones,
+        },
+        timestamp: Date.now(),
+      });
+      showToast('Последний эффект отменен');
+    }
+  }, [showToast]);
+
+  const handleClearAllFx = useCallback(() => {
+    if (mapFxEngineRef.current) {
+      mapFxEngineRef.current.clearAll();
+      setFxStrokesCount(0);
+      syncRef.current?.send({
+        type: 'MAP_FX_CLEAR',
+        timestamp: Date.now(),
+      });
+      showToast('Все эффекты карты очищены');
+    }
+  }, [showToast]);
+
+  const handleQuickAttention = useCallback(
+    (customTxt?: string) => {
+      // Ставим маяк по центру экрана или вьюпорта
+      const centerX = Math.max(20, Math.min(media.width - 20, -viewport.x / viewport.scale + (window.innerWidth / 2) / viewport.scale));
+      const centerY = Math.max(20, Math.min(media.height - 20, -viewport.y / viewport.scale + (window.innerHeight / 2) / viewport.scale));
+
+      const beacon: AttentionBeacon = {
+        id: `beacon_${Date.now()}`,
+        x: centerX,
+        y: centerY,
+        color: '#f59e0b',
+        text: customTxt || attentionText || '⚠️ ВНИМАНИЕ!',
+        style: attentionStyle,
+        timestamp: Date.now(),
+        durationMs: 4500,
+      };
+
+      if (mapFxEngineRef.current) {
+        mapFxEngineRef.current.addBeacon(beacon);
+      }
+      if (soundAlertEnabled) {
+        playAttentionBeep(attentionStyle);
+      }
+      syncRef.current?.send({
+        type: 'ATTENTION_BEACON',
+        payload: beacon,
+        timestamp: Date.now(),
+      });
+      showToast(`Сигнал внимания отправлен игрокам: ${beacon.text}`);
+    },
+    [media.width, media.height, viewport, attentionText, attentionStyle, soundAlertEnabled, showToast]
+  );
+
+  // 15. Обработка мыши: Панорамирование, Кисти Photoshop FX, Лазер, Маяки, Туман, Пинг, Измерение
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button === 1 || e.button === 2 || isSpacePressedRef.current || brushMode === 'pan') {
@@ -1193,8 +1444,124 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         return;
       }
 
-      if (brushMode === 'ping' || e.altKey) {
-        const coords = getMapCoordinates(e.clientX, e.clientY);
+      const coords = getMapCoordinates(e.clientX, e.clientY);
+
+      // 0. Калибровка сетки
+      if (brushMode === 'grid_calibrate') {
+        setCalibrationDrag({
+          startX: coords.x,
+          startY: coords.y,
+          currentX: coords.x,
+          currentY: coords.y,
+          isDragging: true,
+        });
+        return;
+      }
+
+      // 1. Лазерная указка
+      if (brushMode === 'laser' || e.altKey) {
+        const laserState: LaserPointerState = {
+          active: true,
+          x: coords.x,
+          y: coords.y,
+          color: laserColor,
+          trail: [{ x: coords.x, y: coords.y, timestamp: Date.now() }],
+        };
+        activeLaserRef.current = laserState;
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.setLaser(laserState);
+        }
+        syncRef.current?.send({
+          type: 'LASER_SYNC',
+          payload: laserState,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // 2. Привлечь внимание (Маяк тревоги)
+      if (brushMode === 'attention') {
+        const beacon: AttentionBeacon = {
+          id: `beacon_${Date.now()}`,
+          x: coords.x,
+          y: coords.y,
+          color: '#f59e0b',
+          text: attentionText || '⚠️ ВНИМАНИЕ!',
+          style: attentionStyle,
+          timestamp: Date.now(),
+          durationMs: 4500,
+        };
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.addBeacon(beacon);
+        }
+        if (soundAlertEnabled) {
+          playAttentionBeep(attentionStyle);
+        }
+        syncRef.current?.send({
+          type: 'ATTENTION_BEACON',
+          payload: beacon,
+          timestamp: Date.now(),
+        });
+        showToast(`Сигнал внимания: ${beacon.text}`);
+        return;
+      }
+
+      // 3. Рисование живых эффектов (Огонь, Вода, Газ, Маркер)
+      if (brushMode === 'fire' || brushMode === 'water' || brushMode === 'gas' || brushMode === 'marker') {
+        isDrawingFxRef.current = true;
+        currentFxPointsRef.current = [coords];
+        const strokeId = `fx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        currentFxIdRef.current = strokeId;
+
+        const stroke: MapFxStroke = {
+          id: strokeId,
+          tool: brushMode,
+          points: [coords],
+          brushSize,
+          opacity: 0.85,
+          color: brushMode === 'marker' ? markerColor : undefined,
+          variant: brushMode === 'gas' ? gasVariant : brushMode === 'water' ? waterVariant : undefined,
+          createdAt: Date.now(),
+        };
+
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.addStroke(stroke);
+          setFxStrokesCount(mapFxEngineRef.current.strokes.length);
+        }
+
+        syncRef.current?.send({
+          type: 'MAP_FX_STROKE',
+          payload: stroke,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // 4. Зоны заклинаний AOE
+      if (brushMode === 'spell_zone') {
+        spellZoneStartRef.current = coords;
+        return;
+      }
+
+      // 5. Ластик эффектов
+      if (brushMode === 'eraser') {
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.eraseAt(coords, brushSize);
+          setFxStrokesCount(mapFxEngineRef.current.strokes.length);
+          syncRef.current?.send({
+            type: 'MAP_FX_SYNC',
+            payload: {
+              strokes: mapFxEngineRef.current.strokes,
+              spellZones: mapFxEngineRef.current.spellZones,
+            },
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      // 6. Стандартный векторный пинг
+      if (brushMode === 'ping') {
         const ping: PingMarker = {
           id: `ping_${Date.now()}`,
           x: coords.x,
@@ -1211,8 +1578,8 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         return;
       }
 
+      // 7. Линейка
       if (brushMode === 'measure') {
-        const coords = getMapCoordinates(e.clientX, e.clientY);
         setMeasurement({
           startX: coords.x,
           startY: coords.y,
@@ -1223,9 +1590,9 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         return;
       }
 
+      // 8. Туман войны (Открыть / Скрыть)
       if (brushMode === 'reveal' || brushMode === 'hide') {
         isDrawingFogRef.current = true;
-        const coords = getMapCoordinates(e.clientX, e.clientY);
         currentStrokePointsRef.current = [coords];
 
         const stroke: FogStroke = {
@@ -1241,7 +1608,20 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         }
       }
     },
-    [brushMode, viewport, getMapCoordinates, brushSize]
+    [
+      brushMode,
+      viewport,
+      getMapCoordinates,
+      brushSize,
+      laserColor,
+      attentionText,
+      attentionStyle,
+      soundAlertEnabled,
+      markerColor,
+      gasVariant,
+      waterVariant,
+      showToast,
+    ]
   );
 
   const rafRef = useRef<number | null>(null);
@@ -1256,7 +1636,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
           x: dragStartRef.current.vpX + dx,
           y: dragStartRef.current.vpY + dy,
         };
-        
+
         if (rafRef.current === null) {
           rafRef.current = requestAnimationFrame(() => {
             setViewport(newVp);
@@ -1278,8 +1658,96 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         return;
       }
 
+      const coords = getMapCoordinates(e.clientX, e.clientY);
+
+      // Калибровка сетки
+      if (brushMode === 'grid_calibrate') {
+        if (calibrationDrag?.isDragging) {
+          setCalibrationDrag((prev) => (prev ? { ...prev, currentX: coords.x, currentY: coords.y } : null));
+        }
+        return;
+      }
+
+      // Лазерная указка в реальном времени
+      if (activeLaserRef.current && (brushMode === 'laser' || e.altKey)) {
+        const now = Date.now();
+        const trail = activeLaserRef.current.trail || [];
+        trail.push({ x: coords.x, y: coords.y, timestamp: now });
+        const updatedLaser: LaserPointerState = {
+          ...activeLaserRef.current,
+          x: coords.x,
+          y: coords.y,
+          trail: trail.slice(-25),
+        };
+        activeLaserRef.current = updatedLaser;
+
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.setLaser(updatedLaser);
+        }
+
+        if (now - lastSyncTimeRef.current > 30) {
+          lastSyncTimeRef.current = now;
+          syncRef.current?.send({
+            type: 'LASER_SYNC',
+            payload: updatedLaser,
+            timestamp: now,
+          });
+        }
+        return;
+      }
+
+      // Ластик эффектов при ведении
+      if (brushMode === 'eraser' && (e.buttons === 1 || e.buttons === 3)) {
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.eraseAt(coords, brushSize);
+          setFxStrokesCount(mapFxEngineRef.current.strokes.length);
+          syncRef.current?.send({
+            type: 'MAP_FX_SYNC',
+            payload: {
+              strokes: mapFxEngineRef.current.strokes,
+              spellZones: mapFxEngineRef.current.spellZones,
+            },
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      // Рисование штрихов эффектов (Огонь, Вода, Газ, Маркер)
+      if (isDrawingFxRef.current && currentFxIdRef.current) {
+        currentFxPointsRef.current.push(coords);
+
+        const stroke: MapFxStroke = {
+          id: currentFxIdRef.current,
+          tool: brushMode as any,
+          points: [...currentFxPointsRef.current],
+          brushSize,
+          opacity: 0.85,
+          color: brushMode === 'marker' ? markerColor : undefined,
+          variant: brushMode === 'gas' ? gasVariant : brushMode === 'water' ? waterVariant : undefined,
+          createdAt: Date.now(),
+        };
+
+        if (mapFxEngineRef.current) {
+          const idx = mapFxEngineRef.current.strokes.findIndex((s) => s.id === stroke.id);
+          if (idx >= 0) {
+            mapFxEngineRef.current.strokes[idx] = stroke;
+          }
+        }
+
+        const now = Date.now();
+        if (now - lastSyncTimeRef.current > 35) {
+          lastSyncTimeRef.current = now;
+          syncRef.current?.send({
+            type: 'MAP_FX_STROKE',
+            payload: stroke,
+            timestamp: now,
+          });
+        }
+        return;
+      }
+
       if (measurement.active) {
-        const coords = getMapCoordinates(e.clientX, e.clientY);
         if (rafRef.current === null) {
           rafRef.current = requestAnimationFrame(() => {
             setMeasurement((m) => ({ ...m, currentX: coords.x, currentY: coords.y }));
@@ -1290,7 +1758,6 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       }
 
       if (isDrawingFogRef.current && (brushMode === 'reveal' || brushMode === 'hide')) {
-        const coords = getMapCoordinates(e.clientX, e.clientY);
         currentStrokePointsRef.current.push(coords);
 
         const stroke: FogStroke = {
@@ -1306,41 +1773,146 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         }
       }
     },
-    [viewport, syncCameraWithPlayer, measurement.active, brushMode, getMapCoordinates, brushSize]
+    [
+      viewport,
+      syncCameraWithPlayer,
+      measurement.active,
+      brushMode,
+      getMapCoordinates,
+      brushSize,
+      markerColor,
+      gasVariant,
+      waterVariant,
+      calibrationDrag?.isDragging,
+    ]
   );
 
-  const handleMouseUp = useCallback(() => {
-    if (isDraggingRef.current) {
-      isDraggingRef.current = false;
-    }
+  const handleMouseUp = useCallback(
+    (e?: React.MouseEvent) => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+      }
 
-    if (measurement.active) {
-      setMeasurement((m) => ({ ...m, active: false }));
-    }
+      // Завершение выделения рамки калибровки сетки
+      if (brushMode === 'grid_calibrate' && calibrationDrag?.isDragging) {
+        setCalibrationDrag((prev) => (prev ? { ...prev, isDragging: false } : null));
+      }
 
-    if (isDrawingFogRef.current) {
-      isDrawingFogRef.current = false;
-      if (currentStrokePointsRef.current.length > 0) {
-        const finalStroke: FogStroke = {
-          id: `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          type: 'stroke',
-          mode: brushMode === 'reveal' ? 'reveal' : 'hide',
-          points: [...currentStrokePointsRef.current],
-          brushSize,
-        };
-
-        fogActionsRef.current.push(finalStroke);
-        setFogActionCounter((c) => c + 1);
-
+      // Отпускание лазерной указки
+      if (activeLaserRef.current) {
+        activeLaserRef.current = null;
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.setLaser(null);
+        }
         syncRef.current?.send({
-          type: 'FOG_ACTION',
-          payload: finalStroke,
+          type: 'LASER_SYNC',
+          payload: null,
           timestamp: Date.now(),
         });
       }
-      currentStrokePointsRef.current = [];
-    }
-  }, [measurement.active, brushMode, brushSize]);
+
+      // Завершение штриха эффектов (Огонь, Вода, Газ, Маркер)
+      if (isDrawingFxRef.current && currentFxIdRef.current) {
+        isDrawingFxRef.current = false;
+        if (currentFxPointsRef.current.length > 0) {
+          const finalStroke: MapFxStroke = {
+            id: currentFxIdRef.current,
+            tool: brushMode as any,
+            points: [...currentFxPointsRef.current],
+            brushSize,
+            opacity: 0.85,
+            color: brushMode === 'marker' ? markerColor : undefined,
+            variant: brushMode === 'gas' ? gasVariant : brushMode === 'water' ? waterVariant : undefined,
+            createdAt: Date.now(),
+          };
+
+          syncRef.current?.send({
+            type: 'MAP_FX_STROKE',
+            payload: finalStroke,
+            timestamp: Date.now(),
+          });
+        }
+        currentFxPointsRef.current = [];
+        currentFxIdRef.current = '';
+      }
+
+      // Завершение рисования зоны заклинаний AOE
+      if (brushMode === 'spell_zone' && spellZoneStartRef.current && e) {
+        const endCoords = getMapCoordinates(e.clientX, e.clientY);
+        const start = spellZoneStartRef.current;
+        const newZone: SpellZoneArea = {
+          id: `zone_${Date.now()}`,
+          shape: spellShape,
+          startX: start.x,
+          startY: start.y,
+          endX: endCoords.x,
+          endY: endCoords.y,
+          radiusFeet: spellRadius,
+          color: spellColor,
+          label: spellLabel,
+          opacity: 0.35,
+          createdAt: Date.now(),
+        };
+
+        if (mapFxEngineRef.current) {
+          mapFxEngineRef.current.addSpellZone(newZone);
+          setFxStrokesCount(mapFxEngineRef.current.strokes.length + mapFxEngineRef.current.spellZones.length);
+          syncRef.current?.send({
+            type: 'MAP_FX_SYNC',
+            payload: {
+              strokes: mapFxEngineRef.current.strokes,
+              spellZones: mapFxEngineRef.current.spellZones,
+            },
+            timestamp: Date.now(),
+          });
+        }
+        spellZoneStartRef.current = null;
+        showToast(`Создана зона: ${spellLabel} (${spellRadius} ft)`);
+      }
+
+      if (measurement.active) {
+        setMeasurement((m) => ({ ...m, active: false }));
+      }
+
+      if (isDrawingFogRef.current) {
+        isDrawingFogRef.current = false;
+        if (currentStrokePointsRef.current.length > 0) {
+          const finalStroke: FogStroke = {
+            id: `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            type: 'stroke',
+            mode: brushMode === 'reveal' ? 'reveal' : 'hide',
+            points: [...currentStrokePointsRef.current],
+            brushSize,
+          };
+
+          fogActionsRef.current.push(finalStroke);
+          setFogActionCounter((c) => c + 1);
+
+          syncRef.current?.send({
+            type: 'FOG_ACTION',
+            payload: finalStroke,
+            timestamp: Date.now(),
+          });
+        }
+        currentStrokePointsRef.current = [];
+      }
+    },
+    [
+      measurement.active,
+      brushMode,
+      brushSize,
+      getMapCoordinates,
+      spellShape,
+      spellRadius,
+      spellColor,
+      spellLabel,
+      markerColor,
+      gasVariant,
+      waterVariant,
+      showToast,
+      calibrationDrag?.isDragging,
+    ]
+  );
 
   // 16. Зум колесом мыши с центровкой на курсоре
   const handleWheel = useCallback(
@@ -1379,19 +1951,48 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   // 17. Отслеживание горячих клавиш
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Игнорируем горячие клавиши, если фокус в поле ввода или модальном окне
+      if (
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA' ||
+        document.activeElement?.tagName === 'SELECT'
+      ) {
+        return;
+      }
+
       if (e.code === 'Space' && !e.repeat) {
         isSpacePressedRef.current = true;
       }
       if (e.key === 'Alt') {
         isAltPressedRef.current = true;
       }
+
+      // Горячие клавиши Photoshop Map FX
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndoLastFx();
+        return;
+      }
+      if (e.key.toLowerCase() === 'f') setBrushMode('fire');
+      if (e.key.toLowerCase() === 'w') setBrushMode('water');
+      if (e.key.toLowerCase() === 'g' && e.shiftKey) setBrushMode('gas');
+      if (e.key.toLowerCase() === 'b') setBrushMode('marker');
+      if (e.key.toLowerCase() === 'a') setBrushMode('attention');
+      if (e.key.toLowerCase() === 'z' && !e.ctrlKey && !e.metaKey) setBrushMode('spell_zone');
+      if (e.key.toLowerCase() === 'e') setBrushMode('eraser');
+
+      // Базовые клавиши
       if (e.key.toLowerCase() === 'r') setBrushMode('reveal');
       if (e.key.toLowerCase() === 'h') setBrushMode('hide');
-      if (e.key.toLowerCase() === 'm') setBrushMode('measure');
+      if (e.key.toLowerCase() === 'm' && !e.shiftKey) setBrushMode('measure');
       if (e.key.toLowerCase() === 'p') setBrushMode('pan');
-      if (e.key.toLowerCase() === 'l') setIsMapLibraryOpen(true);
+      if (e.key.toLowerCase() === 'l' && !e.shiftKey) setIsMapLibraryOpen(true);
       if (e.key.toLowerCase() === 'm' && e.shiftKey) setIsAudioPlayerOpen((prev) => !prev);
-      if (e.key.toLowerCase() === 'g') {
+      if (e.key === 'F2' || (e.key === ',' && (e.ctrlKey || e.metaKey))) {
+        e.preventDefault();
+        setIsAppSettingsOpen((prev) => !prev);
+      }
+      if (e.key.toLowerCase() === 'g' && !e.shiftKey) {
         setGrid((g) => {
           const next = { ...g, enabled: !g.enabled };
           syncRef.current?.send({ type: 'GRID_CONFIG', payload: next, timestamp: Date.now() });
@@ -1492,132 +2093,107 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   return (
     <div
       id="dm-app-container"
-      className="flex flex-col h-screen w-screen bg-[var(--bg)] text-[var(--ink)] font-mono overflow-hidden select-none"
+      className="app-shell"
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 1. Верхний компактный Header (Variation 5) */}
-      <header className="flex items-center justify-between px-4 h-[48px] border-b border-[var(--ink-faint)] bg-[var(--surface)] flex-shrink-0 z-30">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <Shield className="w-[18px] height-[18px] text-[var(--accent)]" />
-            <span className="font-display font-extrabold text-[12px] text-[var(--accent)] tracking-tight">
-              DM SCREEN v2.0
-            </span>
-          </div>
-
-          {/* Индикатор связи с проектором */}
-          <div
+      {/* 1. Header (Variation 5) */}
+      <header className="app-header">
+        <div className="brand flex items-center gap-3">
+          <Shield className="w-5 h-5 text-[var(--accent)]" />
+          <h1 className="brand-title text-base font-extrabold text-[var(--ink)] tracking-tight">DM SCREEN v2.0</h1>
+          <span
             id="player-connection-indicator"
-            className="label-mono flex items-center gap-2"
-            title={playerConnected ? 'Экран игроков подключен' : 'Экран игроков не открыт'}
-          >
-            <span
-              className="status-dot"
-              style={{
-                background: playerConnected ? '#10b981' : '#ef4444',
-                boxShadow: playerConnected ? '0 0 8px #10b981' : '0 0 8px #ef4444',
-              }}
-            />
-            <span>{playerConnected ? 'Projector: Online' : 'Projector: Offline'}</span>
-          </div>
-
-          {/* Кнопка быстрого вызова библиотеки карт с активной картой */}
-          <button
-            onClick={() => setIsMapLibraryOpen(true)}
-            className="btn hidden sm:inline-flex"
+            className="label-meta hidden sm:inline"
             style={{
-              borderColor: '#38bdf8',
-              color: '#38bdf8',
-              background: 'rgba(56, 189, 248, 0.05)',
+              color: playerConnected ? '#10b981' : '#f43f5e',
+              margin: '0 0 0 0.75rem',
+              opacity: 1,
             }}
-            title="Открыть библиотеку карт и пресетов (горячая клавиша L)"
           >
-            <MapIcon className="w-3.5 h-3.5 text-[#38bdf8]" />
-            <span className="truncate max-w-[170px]">{media.name || 'Библиотека карт'}</span>
-            <span className="text-[9px] px-1 py-0.2 rounded bg-black/40 text-[#94a3b8]">
-              {mapLocations.length}
-            </span>
-          </button>
+            {playerConnected ? '[ Projector: Online ]' : '[ Projector: Offline ]'}
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Главная кнопка D&D генераторов карточек и справочника */}
+        <div className="flex items-center gap-1.5">
           <button
             id="btn-open-dnd-suite-header"
             onClick={() => handleOpenDndSuite('bestiary')}
             className="btn"
-            title="Генератор монстров (CR 0-30), NPC, лута, магазинов, экипировки, магии и быстрый справочник правил"
+            title="D&D Suite: Монстры, NPC, Лут, Лавки, Экипировка, Магия, Правила"
           >
             <ScrollText className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden sm:inline">D&D Suite</span>
           </button>
 
-          {/* Кнопка Аудиоплеера и Саундборда */}
           <button
             id="btn-open-audio-header"
             onClick={() => setIsAudioPlayerOpen(true)}
             className="btn"
-            style={{ borderColor: '#f59e0b', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.08)' }}
-            title="Открыть D&D Аудиоплеер и Саундборд SFX (горячая клавиша Shift+M)"
+            title="Открыть аудио-студию и саундборд SFX (горячая клавиша Shift+M)"
           >
             <Music className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden sm:inline">Аудио & SFX</span>
           </button>
 
-          {/* Главная кнопка генераторов карт */}
           <button
             id="btn-open-generators-header"
             onClick={() => handleOpenGenStudio('battlemap')}
             className="btn"
-            title="Открыть генератор боевых карт, дикой местности, пещер, городов, особняков, таверн или деревень"
+            title="Генераторы боевых карт, пещер, подземелий, городов и таверн"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">Генераторы Карт</span>
+            <span className="hidden sm:inline">Генераторы</span>
           </button>
 
-          {/* Кнопка открытия Polza AI Engine & Campaign Studio */}
           <button
             id="btn-open-polza-ai"
             onClick={() => setIsPolzaAiModalOpen(true)}
             className="btn"
-            style={{ borderColor: '#a855f7', color: '#a855f7' }}
-            title="Открыть JSON AI Engine, Full Campaign Engine и ИИ-Генератор иллюстраций (/api/polza)"
+            style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}
+            title="AI Studio: генерация контента и артов"
           >
-            <Bot className="w-3.5 h-3.5 text-purple-400" />
+            <Bot className="w-3.5 h-3.5 text-[var(--accent)]" />
             <span className="hidden lg:inline">AI Studio</span>
           </button>
 
-          {/* Кнопка открытия единого каталога AetherMap_Data */}
           <button
             id="btn-open-aether-data"
             onClick={() => setIsUnifiedFolderOpen(true)}
             className="btn hidden xl:inline-flex"
-            title="Открыть структуру и реестр локальных ресурсов AetherMap_Data"
+            title="Открыть структуру ресурсов AetherMap_Data"
           >
-            <HardDrive className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <HardDrive className="w-3.5 h-3.5 text-[var(--ink-muted)]" />
             <span>AetherMap_Data</span>
           </button>
 
-          {/* Кнопка открытия окна игроков */}
+          <button
+            id="btn-open-settings"
+            onClick={() => setIsAppSettingsOpen(true)}
+            className="btn"
+            title="Системные настройки приложения и проектора (горячая клавиша F2)"
+          >
+            <Settings className="w-3.5 h-3.5 text-zinc-300" />
+            <span className="hidden sm:inline">Настройки</span>
+          </button>
+
           <button
             id="btn-open-projector"
             onClick={onOpenPlayerWindow}
-            className="btn"
-            title="Открыть второе окно проектора для игроков"
+            className="btn hidden md:inline-flex"
+            title="Открыть отдельное окно проектора для игроков"
           >
             <ExternalLink className="w-3.5 h-3.5 text-[var(--accent)]" />
-            <span className="hidden sm:inline">Экран игроков</span>
+            <span>Экран игроков</span>
           </button>
 
-          {/* Кнопка загрузки своего файла карты */}
           <button
             id="btn-upload-map"
             onClick={() => fileInputRef.current?.click()}
             className="btn btn-accent"
-            title="Загрузить свою карту с диска (JPG, PNG, WebP, MP4)"
+            title="Загрузить свою карту (JPG, PNG, WebP, MP4)"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Загрузить</span>
+            <span>Загрузить</span>
           </button>
 
           <input
@@ -1634,349 +2210,195 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         </div>
       </header>
 
-      {/* 2. Основная рабочая область: Боковая панель + Вьюпорт */}
-      <main className="flex flex-1 overflow-hidden relative">
-        {/* Боковая панель инструментов Мастера (Variation 5) */}
-        <aside
-          id="dm-sidebar"
-          className="w-[320px] border-r border-[var(--ink-faint)] bg-[var(--bg)] flex flex-col justify-between overflow-y-auto flex-shrink-0 z-20"
-        >
-          <div className="flex flex-col">
-            {/* Секция 01: Вид игроков */}
-            <div className="section-card">
-              <div className="section-title">
-                <span className="label-mono" style={{ color: '#38bdf8' }}>[01] Вид игроков</span>
-                <button
-                  onClick={() => setShowPlayerFrustum(!showPlayerFrustum)}
-                  className="label-mono px-1 py-0.5 rounded-sm transition cursor-pointer"
-                  style={{
-                    background: showPlayerFrustum ? '#38bdf8' : 'var(--surface)',
-                    color: showPlayerFrustum ? '#000' : 'var(--ink-muted)',
-                  }}
-                  title="Включить / отключить рамку обзора игроков на столе мастера"
-                >
-                  {showPlayerFrustum ? 'Рамка: ВКЛ' : 'Рамка: ВЫКЛ'}
-                </button>
-              </div>
+      {/* 2. Левая боковая панель (Sidebar): 01 // Viewing Port, 02 // 5E Modules, 03 // Scene Selection */}
+      <aside id="dm-sidebar" className="sidebar">
+        <section className="panel-section">
+          <div className="flex justify-between items-center mb-2">
+            <span className="label-meta mb-0">01 // Viewing Port</span>
+            <button
+              onClick={() => setShowPlayerFrustum(!showPlayerFrustum)}
+              className="label-meta cursor-pointer"
+              style={{ color: showPlayerFrustum ? '#38bdf8' : 'var(--ink-muted)' }}
+              title="Включить / отключить рамку обзора игроков на столе мастера"
+            >
+              {showPlayerFrustum ? '[РАМКА: ВКЛ]' : '[РАМКА: ВЫКЛ]'}
+            </button>
+          </div>
 
-              {/* Статус разрешения проектора */}
-              {playerViewportInfo && (
-                <div className="text-[9px] text-[#94a3b8] flex items-center justify-between font-mono bg-[#090d16] px-2 py-1 rounded-sm border border-[var(--ink-faint)] mb-2">
-                  <span>Экран: {playerViewportInfo.windowWidth}×{playerViewportInfo.windowHeight}px</span>
-                  <span className="text-[#38bdf8]">
-                    Зум: {Math.round(playerViewportInfo.viewport.scale * 100)}%
+          {playerViewportInfo && (
+            <div className="text-[9px] text-[#94a3b8] flex items-center justify-between font-mono bg-[#090d16] px-2 py-1 rounded-sm border border-[var(--ink-faint)] mb-2">
+              <span>Экран: {playerViewportInfo.windowWidth}×{playerViewportInfo.windowHeight}</span>
+              <span className="text-[#38bdf8]">Зум: {Math.round(playerViewportInfo.viewport.scale * 100)}%</span>
+            </div>
+          )}
+
+          <div className="btn-grid">
+            <button
+              id="btn-push-view-to-player"
+              onClick={handlePushViewToPlayer}
+              className="btn"
+              title="Центрировать экран игроков точно на вашей текущей области стола"
+            >
+              <Target className="w-3 h-3 text-[#38bdf8]" />
+              <span>Сфокусировать</span>
+            </button>
+
+            <button
+              id="btn-fit-player-to-map"
+              onClick={handleFitPlayerToMap}
+              className="btn"
+              title="Подогнать всю карту целиком в окно игроков"
+            >
+              <Maximize2 className="w-3 h-3 text-[var(--ink-muted)]" />
+              <span>Всю карту</span>
+            </button>
+
+            <button
+              id="btn-snap-dm-to-player"
+              onClick={handleSnapToPlayerView}
+              className="btn"
+              title="Переместить камеру мастера к текущему положению экрана игроков"
+            >
+              <Crosshair className="w-3 h-3 text-[var(--ink-muted)]" />
+              <span>К виду игроков</span>
+            </button>
+
+            <button
+              id="btn-sync-camera-toggle"
+              onClick={() => setSyncCameraWithPlayer(!syncCameraWithPlayer)}
+              className={`btn ${syncCameraWithPlayer ? 'btn-accent' : ''}`}
+              title="Автоматически двигать камеру игроков при панорамировании мастера"
+            >
+              <Radio className="w-3 h-3" />
+              <span>{syncCameraWithPlayer ? 'Авто-зум: ВКЛ' : 'Авто-зум: СВОБ'}</span>
+            </button>
+          </div>
+        </section>
+
+        <section className="panel-section">
+          <span className="label-meta">02 // 5E Modules</span>
+          <div className="btn-grid">
+            <button id="btn-sidebar-gen-bestiary" onClick={() => handleOpenDndSuite('bestiary')} className="btn">
+              <Skull className="w-3 h-3 text-red-400" />
+              <span>Бестиарий</span>
+            </button>
+            <button id="btn-sidebar-gen-npc" onClick={() => handleOpenDndSuite('npc')} className="btn">
+              <Users className="w-3 h-3 text-blue-400" />
+              <span>NPC</span>
+            </button>
+            <button id="btn-sidebar-gen-loot" onClick={() => handleOpenDndSuite('loot')} className="btn">
+              <Coins className="w-3 h-3 text-amber-400" />
+              <span>Лут</span>
+            </button>
+            <button id="btn-sidebar-gen-shops" onClick={() => handleOpenDndSuite('stores')} className="btn">
+              <Store className="w-3 h-3 text-emerald-400" />
+              <span>Лавки</span>
+            </button>
+            <button id="btn-sidebar-gen-equip" onClick={() => handleOpenDndSuite('equipment')} className="btn">
+              <Sword className="w-3 h-3 text-purple-400" />
+              <span>Экипировка</span>
+            </button>
+            <button id="btn-sidebar-gen-magic" onClick={() => handleOpenDndSuite('magic')} className="btn">
+              <Wand2 className="w-3 h-3 text-cyan-400" />
+              <span>Магия</span>
+            </button>
+            <button id="btn-sidebar-gen-ref" onClick={() => handleOpenDndSuite('reference')} className="btn btn-full">
+              <BookOpen className="w-3 h-3 text-amber-400" />
+              <span>Справочник правил & CR</span>
+            </button>
+          </div>
+        </section>
+
+        <section className="panel-section">
+          <div className="flex justify-between items-center mb-2">
+            <span className="label-meta mb-0">03 // Scene Selection</span>
+            <span className="label-meta mb-0">{mapLocations.length} MAPS</span>
+          </div>
+
+          <div className="flex flex-col gap-1 mb-2">
+            {mapLocations.slice(0, 6).map((loc) => {
+              const isActive = loc.id === activeLocationId;
+              return (
+                <div
+                  key={loc.id}
+                  id={`btn-loc-${loc.id}`}
+                  onClick={() => handleSelectMapLocation(loc)}
+                  className={`map-card ${isActive ? 'active' : ''}`}
+                >
+                  <span className="truncate max-w-[160px]">{loc.name}</span>
+                  <span
+                    className="label-meta mb-0"
+                    style={{ color: isActive ? 'var(--accent)' : 'var(--ink-muted)' }}
+                  >
+                    {isActive ? 'CUR' : loc.category.slice(0, 3).toUpperCase()}
                   </span>
                 </div>
-              )}
-
-              {/* Кнопки управления синхронизацией камеры */}
-              <div className="grid-2">
-                <button
-                  id="btn-push-view-to-player"
-                  onClick={handlePushViewToPlayer}
-                  className="btn"
-                  title="Центрировать экран игроков точно на вашей текущей области стола"
-                >
-                  <Target className="w-3 h-3 text-[#38bdf8]" />
-                  <span>Сфокусировать</span>
-                </button>
-
-                <button
-                  id="btn-fit-player-to-map"
-                  onClick={handleFitPlayerToMap}
-                  className="btn"
-                  title="Подогнать всю карту целиком в окно игроков"
-                >
-                  <Maximize2 className="w-3 h-3 text-[var(--ink-muted)]" />
-                  <span>Всю карту</span>
-                </button>
-
-                <button
-                  id="btn-snap-dm-to-player"
-                  onClick={handleSnapToPlayerView}
-                  className="btn"
-                  title="Переместить камеру мастера к текущему положению экрана игроков"
-                >
-                  <Crosshair className="w-3 h-3 text-[var(--ink-muted)]" />
-                  <span>К виду игроков</span>
-                </button>
-
-                <button
-                  id="btn-sync-camera-toggle"
-                  onClick={() => setSyncCameraWithPlayer(!syncCameraWithPlayer)}
-                  className={`btn ${syncCameraWithPlayer ? 'btn-accent' : ''}`}
-                  title="Автоматически двигать камеру игроков при панорамировании мастера"
-                >
-                  <Radio className="w-3 h-3" />
-                  <span>{syncCameraWithPlayer ? 'Авто-зум: ВКЛ' : 'Авто-зум: СВОБ'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Секция 02: Генераторы 5E */}
-            <div className="section-card">
-              <div className="section-title">
-                <span className="label-mono" style={{ color: 'var(--accent)' }}>[02] Генераторы 5E</span>
-                <span className="label-mono">8 модулей</span>
-              </div>
-
-              <div className="grid-2 mb-2">
-                <button
-                  id="btn-sidebar-gen-bestiary"
-                  onClick={() => handleOpenDndSuite('bestiary')}
-                  className="btn"
-                >
-                  <Skull className="w-3 h-3 text-red-400" />
-                  <span>Бестиарий</span>
-                </button>
-
-                <button
-                  id="btn-sidebar-gen-npc"
-                  onClick={() => handleOpenDndSuite('npc')}
-                  className="btn"
-                >
-                  <Users className="w-3 h-3 text-blue-400" />
-                  <span>NPC</span>
-                </button>
-
-                <button
-                  id="btn-sidebar-gen-loot"
-                  onClick={() => handleOpenDndSuite('loot')}
-                  className="btn"
-                >
-                  <Coins className="w-3 h-3 text-amber-400" />
-                  <span>Лут</span>
-                </button>
-
-                <button
-                  id="btn-sidebar-gen-shops"
-                  onClick={() => handleOpenDndSuite('stores')}
-                  className="btn"
-                >
-                  <Store className="w-3 h-3 text-emerald-400" />
-                  <span>Лавки</span>
-                </button>
-
-                <button
-                  id="btn-sidebar-gen-equip"
-                  onClick={() => handleOpenDndSuite('equipment')}
-                  className="btn"
-                >
-                  <Sword className="w-3 h-3 text-purple-400" />
-                  <span>Экипировка</span>
-                </button>
-
-                <button
-                  id="btn-sidebar-gen-magic"
-                  onClick={() => handleOpenDndSuite('magic')}
-                  className="btn"
-                >
-                  <Wand2 className="w-3 h-3 text-cyan-400" />
-                  <span>Магия</span>
-                </button>
-              </div>
-
-              <button
-                id="btn-sidebar-gen-ref"
-                onClick={() => handleOpenDndSuite('reference')}
-                className="btn w-full"
-              >
-                <BookOpen className="w-3 h-3 text-amber-400" />
-                <span>Справочник правил & CR</span>
-              </button>
-            </div>
-
-            {/* Секция 03: Библиотека */}
-            <div className="section-card">
-              <div className="section-title">
-                <span className="label-mono">[03] Библиотека</span>
-                <span className="label-mono">{mapLocations.length} карт</span>
-              </div>
-
-              {/* Список пресетов карт */}
-              <div className="preset-list">
-                {mapLocations.slice(0, 6).map((loc) => {
-                  const isActive = loc.id === activeLocationId;
-                  return (
-                    <div
-                      key={loc.id}
-                      id={`btn-loc-${loc.id}`}
-                      onClick={() => handleSelectMapLocation(loc)}
-                      className={`preset-item ${isActive ? 'active' : ''}`}
-                    >
-                      <span className="truncate max-w-[170px]">{loc.name}</span>
-                      <span className="label-mono">
-                        {isActive ? 'Cur' : loc.category.slice(0, 3)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <button
-                onClick={() => setIsMapLibraryOpen(true)}
-                className="btn w-full"
-              >
-                <FolderOpen className="w-3 h-3 text-[#38bdf8]" />
-                <span>Библиотека Карт (L)</span>
-              </button>
-            </div>
-
-            {/* Секция 04: Туман войны */}
-            <div className="section-card">
-              <div className="section-title">
-                <span className="label-mono">[04] Туман войны</span>
-                <span className="label-mono">R/H/M/P</span>
-              </div>
-
-              <div className="grid-2">
-                <button
-                  id="tool-reveal"
-                  onClick={() => setBrushMode('reveal')}
-                  className={`btn ${brushMode === 'reveal' ? 'btn-accent' : ''}`}
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>Открыть (R)</span>
-                </button>
-
-                <button
-                  id="tool-hide"
-                  onClick={() => setBrushMode('hide')}
-                  className={`btn ${brushMode === 'hide' ? 'btn-accent' : ''}`}
-                >
-                  <EyeOff className="w-3.5 h-3.5" />
-                  <span>Скрыть (H)</span>
-                </button>
-
-                <button
-                  id="tool-measure"
-                  onClick={() => setBrushMode('measure')}
-                  className={`btn ${brushMode === 'measure' ? 'btn-accent' : ''}`}
-                >
-                  <Ruler className="w-3.5 h-3.5" />
-                  <span>Линейка (M)</span>
-                </button>
-
-                <button
-                  id="tool-pan"
-                  onClick={() => setBrushMode('pan')}
-                  className={`btn ${brushMode === 'pan' ? 'btn-accent' : ''}`}
-                >
-                  <Move className="w-3.5 h-3.5" />
-                  <span>Рука (P)</span>
-                </button>
-              </div>
-
-              {/* Ползунки кисти и прозрачности */}
-              <div className="mt-3 space-y-2">
-                <div>
-                  <div className="flex justify-between label-mono mb-1">
-                    <span>Кисть</span>
-                    <span style={{ color: 'var(--accent)' }}>{brushSize}px</span>
-                  </div>
-                  <input
-                    id="slider-brush-size"
-                    type="range"
-                    min="20"
-                    max="300"
-                    step="5"
-                    value={brushSize}
-                    onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
-                    className="input-range"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between label-mono mb-1">
-                    <span>Прозрачность (DM)</span>
-                    <span>{Math.round(dmFogOpacity * 100)}%</span>
-                  </div>
-                  <input
-                    id="slider-dm-fog-opacity"
-                    type="range"
-                    min="0.1"
-                    max="0.9"
-                    step="0.05"
-                    value={dmFogOpacity}
-                    onChange={(e) => setDmFogOpacity(parseFloat(e.target.value))}
-                    className="input-range"
-                  />
-                </div>
-              </div>
-
-              {/* Глобальные действия тумана */}
-              <div className="grid-2 mt-2">
-                <button
-                  id="btn-fog-fill-all"
-                  onClick={handleFogFillAll}
-                  className="btn"
-                >
-                  Скрыть всё
-                </button>
-                <button
-                  id="btn-fog-clear-all"
-                  onClick={handleFogClearAll}
-                  className="btn"
-                >
-                  Открыть всё
-                </button>
-              </div>
-            </div>
-
-            {/* Секция 05: Сетка & Экспорт */}
-            <div className="section-card" style={{ borderBottom: 'none' }}>
-              <div className="section-title">
-                <span className="label-mono">[05] Сетка</span>
-                <button
-                  id="btn-toggle-grid"
-                  onClick={() => updateGrid({ enabled: !grid.enabled })}
-                  className={`btn ${grid.enabled ? 'btn-accent' : ''}`}
-                  style={{ height: '18px', padding: '0 6px', fontSize: '8px' }}
-                >
-                  {grid.enabled ? 'ВКЛ' : 'ВЫКЛ'}
-                </button>
-              </div>
-
-              {grid.enabled && (
-                <div className="space-y-2 mb-2">
-                  <div>
-                    <div className="flex justify-between label-mono mb-1">
-                      <span>Клетка</span>
-                      <span>{grid.size}px</span>
-                    </div>
-                    <input
-                      id="slider-grid-size"
-                      type="range"
-                      min="30"
-                      max="150"
-                      step="2"
-                      value={grid.size}
-                      onChange={(e) => updateGrid({ size: parseInt(e.target.value, 10) })}
-                      className="input-range"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <button
-                id="btn-download-standalone"
-                onClick={handleDownloadStandalone}
-                className="btn w-full mt-1"
-                title="Скачать один автономный HTML-файл для игры без интернета"
-              >
-                <Download className="w-3.5 h-3.5 text-[var(--accent)]" />
-                <span>Скачать Offline HTML</span>
-              </button>
-            </div>
+              );
+            })}
           </div>
-        </aside>
 
-        {/* 3. Основная рабочая область (Холст с картой, туманом и рамкой проектора) */}
-        <section
-          id="dm-viewport-container"
-          ref={containerRef}
-          className="flex-1 relative bg-[#050505] cursor-crosshair overflow-hidden"
-          style={{
+          <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+            <button
+              onClick={() => setIsMapLibraryOpen(true)}
+              className="btn"
+              title="Открыть библиотеку сохраненных и предустановленных карт (L)"
+            >
+              <FolderOpen className="w-3 h-3 text-[#38bdf8]" />
+              <span>Карты (L)</span>
+            </button>
+            <button
+              id="btn-sidebar-settings"
+              onClick={() => setIsAppSettingsOpen(true)}
+              className="btn"
+              title="Системные настройки приложения и проектора (F2)"
+            >
+              <Settings className="w-3 h-3 text-zinc-300" />
+              <span>Настройки</span>
+            </button>
+          </div>
+        </section>
+
+        {/* 04 // Dynamic FX & Map Tools — Интегрированная панель спецэффектов и рисования */}
+        <PhotoshopMapToolbar
+          brushMode={brushMode}
+          setBrushMode={setBrushMode}
+          brushSize={brushSize}
+          setBrushSize={setBrushSize}
+          gasVariant={gasVariant}
+          setGasVariant={setGasVariant}
+          waterVariant={waterVariant}
+          setWaterVariant={setWaterVariant}
+          laserColor={laserColor}
+          setLaserColor={setLaserColor}
+          attentionText={attentionText}
+          setAttentionText={setAttentionText}
+          attentionStyle={attentionStyle}
+          setAttentionStyle={setAttentionStyle}
+          soundAlertEnabled={soundAlertEnabled}
+          setSoundAlertEnabled={setSoundAlertEnabled}
+          markerColor={markerColor}
+          setMarkerColor={setMarkerColor}
+          spellShape={spellShape}
+          setSpellShape={setSpellShape}
+          spellRadius={spellRadius}
+          setSpellRadius={setSpellRadius}
+          spellLabel={spellLabel}
+          setSpellLabel={setSpellLabel}
+          spellColor={spellColor}
+          setSpellColor={setSpellColor}
+          onUndoLastFx={handleUndoLastFx}
+          onClearAllFx={handleClearAllFx}
+          onQuickAttention={handleQuickAttention}
+          fxStrokesCount={fxStrokesCount}
+        />
+      </aside>
+
+      {/* 3. Основная рабочая область (Холст с картой, туманом и рамкой проектора) */}
+      <main
+        id="dm-viewport-container"
+        ref={containerRef}
+        className="viewport-container cursor-crosshair overflow-hidden select-none"
+        style={{
             backgroundImage: 'radial-gradient(var(--ink-faint) 1px, transparent 1px)',
             backgroundSize: '20px 20px',
           }}
@@ -2068,16 +2490,15 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
             </div>
           )}
 
-          {/* Индикатор статуса карты сверху слева (Variation 5) */}
-          <div className="map-ui-top pointer-events-none">
-            <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{media.name}</span>
-            <span className="mx-1.5 text-[var(--ink-muted)]">|</span>
-            <span>{media.width}×{media.height}PX</span>
-            <span className="mx-1.5 text-[var(--ink-muted)]">|</span>
-            <span>ZOOM: {Math.round(viewport.scale * 100)}%</span>
+          {/* Blueprint grid overlay (Variation 5) */}
+          <div className="blueprint-grid" />
+
+          {/* Плавающий индикатор статуса карты сверху слева (Variation 5) */}
+          <div className="floating-pill hidden xl:block">
+            ACTIVE // {media.name} [{media.width}×{media.height}PX] ZOOM: {Math.round(viewport.scale * 100)}%
             {measurement.active && (
               <span className="ml-2 font-mono text-[var(--accent)]">
-                [DIST: {distanceFeet}FT / {distanceCells}C]
+                | DIST: {distanceFeet}FT / {distanceCells}C
               </span>
             )}
           </div>
@@ -2106,6 +2527,84 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               ⟲
             </button>
           </div>
+
+          {/* Интерактивная плавающая панель управления калибровкой сетки */}
+          {brushMode === 'grid_calibrate' && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-[#0c1017]/95 border border-amber-500/80 rounded-xl px-4 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.8)] backdrop-blur-md flex flex-wrap items-center gap-4 text-xs">
+              <div className="flex items-center gap-2 text-amber-400 font-bold font-mono border-r border-amber-500/30 pr-3">
+                <Grid className="w-4 h-4 text-amber-400 animate-spin-slow" />
+                <span>КАЛИБРОВКА СЕТКИ</span>
+              </div>
+
+              {/* Выбор количества клеток в выделении */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-400 font-mono uppercase">Клеток в рамке:</span>
+                <div className="flex gap-1 bg-black/60 p-0.5 rounded border border-slate-700">
+                  {[1, 2, 3, 5, 10].map((num) => (
+                    <button
+                      key={num}
+                      onClick={() => setCalibrationCellCount(num)}
+                      className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all cursor-pointer ${
+                        calibrationCellCount === num
+                          ? 'bg-amber-500 text-black font-bold shadow'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {num}x{num}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Результат вычислений */}
+              {(() => {
+                const metrics = getCalibrationMetrics();
+                return (
+                  <div className="text-[11px] font-mono text-amber-200/90 flex items-center gap-2 bg-amber-950/40 px-2.5 py-1 rounded border border-amber-500/30">
+                    {metrics ? (
+                      <span>
+                        Клетка: <strong>{metrics.cellSize}px</strong> | Смещение: X:{metrics.offsetX}px, Y:{metrics.offsetY}px
+                      </span>
+                    ) : (
+                      <span className="text-amber-400/80 italic">Зажмите ЛКМ и выделите клетку на карте</span>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Кнопки действий */}
+              <div className="flex items-center gap-1.5 ml-auto">
+                <button
+                  onClick={handleApplyCalibration}
+                  disabled={!getCalibrationMetrics()}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white font-bold rounded shadow flex items-center gap-1.5 transition text-xs cursor-pointer"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Применить</span>
+                </button>
+
+                <button
+                  onClick={() => setCalibrationDrag(null)}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded flex items-center gap-1 transition text-xs cursor-pointer"
+                  title="Сбросить выделение"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Сброс</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setCalibrationDrag(null);
+                    setBrushMode('pan');
+                  }}
+                  className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/50 text-rose-300 rounded transition text-xs cursor-pointer"
+                  title="Выйти из режима калибровки"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Индикатор активной проекции на экран игроков */}
           {projectedCard && (
@@ -2261,6 +2760,66 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               />
             )}
 
+            {/* Слой 2.5: Интерактивная рамка и живой предпросмотр калибровки сетки */}
+            {brushMode === 'grid_calibrate' && calibrationDrag && (() => {
+              const metrics = getCalibrationMetrics();
+              if (!metrics) return null;
+
+              return (
+                <div className="absolute inset-0 pointer-events-none z-30">
+                  {/* 1. Живая временная предпросмотровая сетка поверх всей карты */}
+                  <div
+                    className="absolute inset-0 pointer-events-none opacity-60 transition-all duration-75"
+                    style={{
+                      backgroundImage: `linear-gradient(to right, #00f0ff 1.5px, transparent 1.5px), linear-gradient(to bottom, #00f0ff 1.5px, transparent 1.5px)`,
+                      backgroundSize: `${metrics.cellSize}px ${metrics.cellSize}px`,
+                      backgroundPosition: `${metrics.offsetX}px ${metrics.offsetY}px`,
+                    }}
+                  />
+
+                  {/* 2. Выделенная рамка клетки с внутренней подсеткой */}
+                  <div
+                    className="absolute border-2 border-amber-400 bg-amber-500/20 shadow-[0_0_25px_rgba(245,158,11,0.65)] rounded-xs"
+                    style={{
+                      left: `${metrics.minX}px`,
+                      top: `${metrics.minY}px`,
+                      width: `${metrics.boxSize}px`,
+                      height: `${metrics.boxSize}px`,
+                    }}
+                  >
+                    {/* Внутренние линии подсетки для 2x2, 3x3, 5x5 и т.д. */}
+                    {metrics.cellsCount > 1 && (
+                      <div
+                        className="absolute inset-0"
+                        style={{
+                          backgroundImage: `linear-gradient(to right, rgba(251, 191, 36, 0.7) 1px, transparent 1px), linear-gradient(to bottom, rgba(251, 191, 36, 0.7) 1px, transparent 1px)`,
+                          backgroundSize: `${metrics.cellSize}px ${metrics.cellSize}px`,
+                        }}
+                      />
+                    )}
+
+                    {/* Угловые прицелы */}
+                    <div className="absolute -top-1.5 -left-1.5 w-3 h-3 border-t-2 border-l-2 border-amber-300" />
+                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 border-t-2 border-r-2 border-amber-300" />
+                    <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 border-b-2 border-l-2 border-amber-300" />
+                    <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 border-b-2 border-r-2 border-amber-300" />
+
+                    {/* Плавающий бейдж с метриками */}
+                    <div
+                      className="absolute -top-7 left-0 bg-black/90 border border-amber-400 text-amber-300 text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-2xl flex items-center gap-1.5 whitespace-nowrap"
+                      style={{
+                        transform: `scale(${Math.max(0.6, 1 / viewport.scale)})`,
+                        transformOrigin: 'bottom left',
+                      }}
+                    >
+                      <span>📐 КЛЕТКА: {metrics.cellSize}px</span>
+                      <span className="text-amber-200/70">[{metrics.cellsCount}x{metrics.cellsCount}]</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Слой 3: Холст Тумана Войны (Canvas 2D) */}
             <canvas
               id="fog-canvas-layer"
@@ -2269,7 +2828,15 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               style={{ width: `${media.width}px`, height: `${media.height}px` }}
             />
 
-            {/* Слой 4: Рамка обзора экрана игроков (Player Viewport Frustum Frame) */}
+            {/* Слой 4: Холст Живых Эффектов Карты Photoshop FX (Огонь, Вода, Газ, Лазер, Маяки внимания, Маркеры) */}
+            <canvas
+              id="map-fx-canvas-layer"
+              ref={mapFxCanvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none z-10"
+              style={{ width: `${media.width}px`, height: `${media.height}px` }}
+            />
+
+            {/* Слой 5: Рамка обзора экрана игроков (Player Viewport Frustum Frame) */}
             {showPlayerFrustum && playerFrustumRect && (
               <div
                 id="player-viewport-frustum-frame"
@@ -2352,8 +2919,230 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               ))}
             </svg>
           </div>
-        </section>
-      </main>
+
+          {/* Плавающий переключатель DM / Проектор (Variation 5) */}
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 pointer-events-auto">
+            <button className="btn btn-accent shadow-xl">Мастер (DM)</button>
+            <button
+              onClick={onOpenPlayerWindow}
+              className="btn shadow-xl"
+              style={{ background: 'rgba(0,0,0,0.85)' }}
+              title="Открыть отдельное окно проектора для игроков"
+            >
+              Игроки (Проектор)
+            </button>
+          </div>
+        </main>
+
+        {/* 4. Правая панель инструментов: 04 // Environment, 05 // System, Audio Box (Variation 5) */}
+        <aside id="dm-tools" className="tools">
+          <div className="flex-1 p-5 overflow-y-auto">
+            {/* 04 // Environment */}
+            <section className="panel-section">
+              <span className="label-meta">04 // Environment</span>
+              <div className="btn-grid">
+                <button
+                  id="tool-reveal"
+                  onClick={() => setBrushMode('reveal')}
+                  className={`btn ${brushMode === 'reveal' ? 'btn-accent' : ''}`}
+                  title="Открыть туман войны (горячая клавиша R)"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Открыть (R)</span>
+                </button>
+
+                <button
+                  id="tool-hide"
+                  onClick={() => setBrushMode('hide')}
+                  className={`btn ${brushMode === 'hide' ? 'btn-accent' : ''}`}
+                  title="Скрыть туманом войны (горячая клавиша H)"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Скрыть (H)</span>
+                </button>
+
+                <button
+                  id="tool-measure"
+                  onClick={() => setBrushMode('measure')}
+                  className={`btn ${brushMode === 'measure' ? 'btn-accent' : ''}`}
+                  title="Линейка расстояний (горячая клавиша M)"
+                >
+                  <Ruler className="w-3.5 h-3.5" />
+                  <span>Линейка (M)</span>
+                </button>
+
+                <button
+                  id="tool-pan"
+                  onClick={() => setBrushMode('pan')}
+                  className={`btn ${brushMode === 'pan' ? 'btn-accent' : ''}`}
+                  title="Перемещение карты (горячая клавиша P)"
+                >
+                  <Move className="w-3.5 h-3.5" />
+                  <span>Рука (P)</span>
+                </button>
+              </div>
+
+              <div className="mt-4">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="label-meta mb-0">Brush Size</span>
+                  <span className="label-meta mb-0" style={{ color: 'var(--accent)' }}>{brushSize}px</span>
+                </div>
+                <input
+                  id="slider-brush-size"
+                  type="range"
+                  min="20"
+                  max="300"
+                  step="5"
+                  value={brushSize}
+                  onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
+                />
+              </div>
+
+              <div className="mt-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="label-meta mb-0">Fog Opacity (DM)</span>
+                  <span className="label-meta mb-0">{Math.round(dmFogOpacity * 100)}%</span>
+                </div>
+                <input
+                  id="slider-dm-fog-opacity"
+                  type="range"
+                  min="0.1"
+                  max="0.9"
+                  step="0.05"
+                  value={dmFogOpacity}
+                  onChange={(e) => setDmFogOpacity(parseFloat(e.target.value))}
+                />
+              </div>
+
+              <div className="btn-grid mt-3">
+                <button id="btn-fog-fill-all" onClick={handleFogFillAll} className="btn">
+                  Скрыть всё
+                </button>
+                <button id="btn-fog-clear-all" onClick={handleFogClearAll} className="btn">
+                  Открыть всё
+                </button>
+              </div>
+            </section>
+
+            {/* 05 // System */}
+            <section className="panel-section">
+              <div className="flex justify-between items-center mb-2">
+                <span className="label-meta mb-0">05 // System</span>
+                <button
+                  id="btn-toggle-grid"
+                  onClick={() => updateGrid({ enabled: !grid.enabled })}
+                  className={`btn ${grid.enabled ? 'btn-accent' : ''}`}
+                  style={{ padding: '2px 8px', fontSize: '9px' }}
+                >
+                  {grid.enabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              {grid.enabled && (
+                <div className="mb-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="label-meta mb-0">Grid Size</span>
+                    <span className="label-meta mb-0">{grid.size}px</span>
+                  </div>
+                  <input
+                    id="slider-grid-size"
+                    type="range"
+                    min="30"
+                    max="150"
+                    step="2"
+                    value={grid.size}
+                    onChange={(e) => updateGrid({ size: parseInt(e.target.value, 10) })}
+                  />
+                </div>
+              )}
+
+              <button
+                id="btn-download-standalone"
+                onClick={handleDownloadStandalone}
+                className="btn btn-full w-full"
+                style={{ background: 'var(--ink-faint)', border: 'none' }}
+                title="Скачать один автономный HTML-файл для игры без интернета"
+              >
+                <Download className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span>Скачать Offline HTML</span>
+              </button>
+            </section>
+          </div>
+
+          {/* Audio Engine Box (Variation 5) */}
+          <div className="audio-box">
+            <div className="flex justify-between items-center mb-1">
+              <span className="label-meta mb-0">Audio Engine // {audioEngineState.currentPlaylistName || 'Ambient / Tavern'}</span>
+              <button
+                onClick={() => setIsAudioPlayerOpen(true)}
+                className="label-meta mb-0 hover:text-[var(--accent)] transition cursor-pointer"
+                title="Открыть полный микшер"
+              >
+                FULL ↗
+              </button>
+            </div>
+            <div
+              className="text-sm font-semibold text-white mb-2 truncate"
+              title={audioEngineState.currentTrack?.title || 'The Drunken Dragon Inn'}
+            >
+              {audioEngineState.currentTrack?.title || 'The Drunken Dragon Inn'}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => audioService.togglePlayPause()}
+                className="btn flex items-center justify-center shrink-0"
+                style={{
+                  borderRadius: '50%',
+                  width: 38,
+                  height: 38,
+                  padding: 0,
+                  background: 'var(--accent)',
+                  color: '#fff',
+                }}
+                title={audioEngineState.isPlaying && !audioEngineState.isPaused ? 'Пауза' : 'Воспроизведение'}
+              >
+                {audioEngineState.isPlaying && !audioEngineState.isPaused ? (
+                  <Pause className="w-4 h-4 fill-current" />
+                ) : (
+                  <Play className="w-4 h-4 fill-current ml-0.5" />
+                )}
+              </button>
+              <button
+                onClick={() => audioService.nextTrack()}
+                className="btn btn-icon shrink-0"
+                title="Следующий трек"
+              >
+                <SkipForward className="w-3.5 h-3.5" />
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={audioEngineState.isMuted ? 0 : audioEngineState.volume}
+                onChange={(e) => audioService.setVolume(parseFloat(e.target.value))}
+                className="flex-1"
+                title={`Громкость: ${Math.round(audioEngineState.volume * 100)}%`}
+              />
+            </div>
+          </div>
+        </aside>
+
+        {/* 5. Статус-бар (Variation 5) */}
+        <footer className="status-bar">
+          <div className="label-meta mb-0">
+            {media.width}×{media.height} | {Math.round(viewport.scale * 100)}% SCALE | SESSION_MASTER
+          </div>
+          <div className="label-meta mb-0 hidden md:block">
+            X: {Math.round(viewport.x)} Y: {Math.round(viewport.y)} | FOG: {Math.round(dmFogOpacity * 100)}%
+          </div>
+          <div
+            className="label-meta mb-0"
+            style={{ color: playerConnected ? '#10b981' : 'var(--ink-muted)' }}
+          >
+            {`${playerConnected ? 'PROJECTOR: ONLINE' : 'PROJECTOR: OFFLINE'} // LATENCY: 12ms STABLE`}
+          </div>
+        </footer>
 
       {/* 4. Модальное окно Библиотеки Карт и Локаций */}
       <MapLibraryModal
@@ -2475,13 +3264,16 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         }}
       />
       {/* 10. D&D Audio Player & Soundboard */}
-      <AudioMiniPlayer
-        onOpenFullPlayer={() => setIsAudioPlayerOpen(true)}
-        showToast={showToast}
-      />
       <AudioPlayerModal
         isOpen={isAudioPlayerOpen}
         onClose={() => setIsAudioPlayerOpen(false)}
+        showToast={showToast}
+      />
+      {/* 11. Системные настройки AetherMap OS */}
+      <AppSettingsModal
+        isOpen={isAppSettingsOpen}
+        onClose={() => setIsAppSettingsOpen(false)}
+        onSettingsChange={handleAppSettingsChange}
         showToast={showToast}
       />
     </div>

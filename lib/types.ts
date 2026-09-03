@@ -3,10 +3,30 @@
  */
 
 import { CampaignCard } from './dnd-engine/types';
+import {
+  MapFxStroke,
+  SpellZoneArea,
+  LaserPointerState,
+  AttentionBeacon,
+} from './map-canvas-engine/types';
 
 export type AppMode = 'dm' | 'player';
 
-export type BrushMode = 'reveal' | 'hide' | 'pan' | 'ping' | 'measure';
+export type BrushMode =
+  | 'reveal'
+  | 'hide'
+  | 'pan'
+  | 'ping'
+  | 'measure'
+  | 'laser'
+  | 'attention'
+  | 'fire'
+  | 'water'
+  | 'gas'
+  | 'marker'
+  | 'spell_zone'
+  | 'eraser'
+  | 'grid_calibrate';
 
 export type GeneratorType = 'dungeon' | 'cave' | 'city' | 'dwell' | 'taverns' | 'village' | 'battlemap';
 
@@ -129,6 +149,15 @@ export interface SavedMapLocation {
   generatorType?: GeneratorType | 'custom';
 }
 
+export interface ProjectorSettingsSync {
+  brightness: number;
+  contrast: number;
+  invertColors: boolean;
+  blackout: boolean;
+  showGridOnPlayer: boolean;
+  showPingsOnPlayer: boolean;
+}
+
 // Сообщения межпроцессного взаимодействия через BroadcastChannel
 export type SyncMessage =
   | { type: 'PLAYER_READY'; timestamp: number }
@@ -143,6 +172,12 @@ export type SyncMessage =
   | { type: 'PING'; payload: PingMarker; timestamp: number }
   | { type: 'PROJECT_CARD'; payload: { card: CampaignCard | null }; timestamp: number }
   | { type: 'TABLE_CARDS_SYNC'; payload: { cards: CampaignCard[] }; timestamp: number }
+  | { type: 'SETTINGS_SYNC'; payload: ProjectorSettingsSync; timestamp: number }
+  | { type: 'MAP_FX_STROKE'; payload: MapFxStroke; timestamp: number }
+  | { type: 'MAP_FX_SYNC'; payload: { strokes: MapFxStroke[]; spellZones: SpellZoneArea[] }; timestamp: number }
+  | { type: 'MAP_FX_CLEAR'; timestamp: number }
+  | { type: 'LASER_SYNC'; payload: LaserPointerState | null; timestamp: number }
+  | { type: 'ATTENTION_BEACON'; payload: AttentionBeacon; timestamp: number }
   | { type: 'HEARTBEAT'; timestamp: number; role: 'dm' | 'player' };
 
 export interface DMFullState {
@@ -154,6 +189,8 @@ export interface DMFullState {
   fogBaseFilled: boolean;
   projectedCard?: CampaignCard | null;
   pinnedTableCards?: CampaignCard[];
+  mapFxStrokes?: MapFxStroke[];
+  spellZones?: SpellZoneArea[];
 }
 
 export interface GeneratorExportEventData {

@@ -16,8 +16,17 @@ import {
   SyncMessage,
   DMFullState,
   PlayerViewportInfo,
+  ProjectorSettingsSync,
 } from '@/lib/types';
 import { CampaignCard } from '@/lib/dnd-engine/types';
+import {
+  MapFxStroke,
+  SpellZoneArea,
+  LaserPointerState,
+  AttentionBeacon,
+} from '@/lib/map-canvas-engine/types';
+import { MapFxEngine } from '@/lib/map-canvas-engine/MapFxEngine';
+import { playAttentionBeep } from '@/lib/audio/alertSound';
 import { SyncController } from '@/lib/sync';
 import { FogEngine } from '@/lib/fog-engine';
 import { PRESET_MAPS } from '@/lib/presets';
@@ -36,6 +45,16 @@ export const PlayerView: React.FC = () => {
     aspectRatio: PRESET_MAPS[0].width / PRESET_MAPS[0].height,
   });
   const currentObjectUrlRef = useRef<string | null>(null);
+
+  // Настройки проектора
+  const [projectorSettings, setProjectorSettings] = useState<ProjectorSettingsSync>({
+    brightness: 1.0,
+    contrast: 1.0,
+    invertColors: false,
+    blackout: false,
+    showGridOnPlayer: true,
+    showPingsOnPlayer: true,
+  });
 
   // Состояние спроецированной карточки от Мастера
   const [projectedCard, setProjectedCard] = useState<CampaignCard | null>(null);
@@ -61,10 +80,12 @@ export const PlayerView: React.FC = () => {
   const [isSyncConnected, setIsSyncConnected] = useState<boolean>(false);
   const [showHint, setShowHint] = useState<boolean>(true);
 
-  // Ссылки на DOM и движок тумана
+  // Ссылки на DOM и движки тумана и визуальных эффектов
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fogCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fogEngineRef = useRef<FogEngine | null>(null);
+  const mapFxCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mapFxEngineRef = useRef<MapFxEngine | null>(null);
   const syncRef = useRef<SyncController | null>(null);
   const isFogBaseFilledRef = useRef<boolean>(false);
   const fogActionsHistoryRef = useRef<FogAction[]>([]);
@@ -106,7 +127,7 @@ export const PlayerView: React.FC = () => {
     });
   }, []);
 
-  // 1. Инициализация движка 100% непрозрачного тумана
+  // 1. Инициализация движка 100% непрозрачного тумана и движка эффектов карты (MapFxEngine)
   useEffect(() => {
     if (fogCanvasRef.current) {
       fogEngineRef.current = new FogEngine(fogCanvasRef.current, false);
@@ -117,6 +138,15 @@ export const PlayerView: React.FC = () => {
         fogEngineRef.current.clearAll();
       }
     }
+
+    if (mapFxCanvasRef.current) {
+      mapFxEngineRef.current = new MapFxEngine(mapFxCanvasRef.current);
+      mapFxEngineRef.current.resize(media.width, media.height);
+    }
+
+    return () => {
+      mapFxEngineRef.current?.destroy();
+    };
   }, []);
 
   // Начальная авто-подгонка вьюпорта
@@ -164,6 +194,10 @@ export const PlayerView: React.FC = () => {
         fogEngineRef.current.clearAll();
       }
     }
+
+    if (mapFxEngineRef.current && mapFxCanvasRef.current) {
+      mapFxEngineRef.current.resize(width, height);
+    }
   }, []);
 
   // 2. Обработчик сообщений от Мастера
@@ -196,6 +230,16 @@ export const PlayerView: React.FC = () => {
         fogEngineRef.current.replayActions(fogActionsHistoryRef.current, state.fogBaseFilled);
       }
 
+      // Применяем эффекты карты (Огонь, Вода, Газ, Зоны заклинаний)
+      if (mapFxEngineRef.current) {
+        if (state.mapFxStrokes) {
+          mapFxEngineRef.current.setStrokes(state.mapFxStrokes);
+        }
+        if (state.spellZones) {
+          mapFxEngineRef.current.setSpellZones(state.spellZones);
+        }
+      }
+
       // Применяем спроецированную карточку и карточки стола
       if (state.projectedCard !== undefined) {
         setProjectedCard(state.projectedCard);
@@ -203,10 +247,40 @@ export const PlayerView: React.FC = () => {
       if (state.pinnedTableCards) {
         setPinnedCards(state.pinnedTableCards);
       }
+    } else if (msg.type === 'MAP_FX_STROKE') {
+      const stroke = msg.payload;
+      if (mapFxEngineRef.current) {
+        const existingIdx = mapFxEngineRef.current.strokes.findIndex((s) => s.id === stroke.id);
+        if (existingIdx >= 0) {
+          mapFxEngineRef.current.strokes[existingIdx] = stroke;
+        } else {
+          mapFxEngineRef.current.addStroke(stroke);
+        }
+      }
+    } else if (msg.type === 'MAP_FX_SYNC') {
+      if (mapFxEngineRef.current) {
+        mapFxEngineRef.current.setStrokes(msg.payload.strokes || []);
+        mapFxEngineRef.current.setSpellZones(msg.payload.spellZones || []);
+      }
+    } else if (msg.type === 'MAP_FX_CLEAR') {
+      if (mapFxEngineRef.current) {
+        mapFxEngineRef.current.clearAll();
+      }
+    } else if (msg.type === 'LASER_SYNC') {
+      if (mapFxEngineRef.current) {
+        mapFxEngineRef.current.setLaser(msg.payload);
+      }
+    } else if (msg.type === 'ATTENTION_BEACON') {
+      if (mapFxEngineRef.current) {
+        mapFxEngineRef.current.addBeacon(msg.payload);
+        playAttentionBeep(msg.payload.style || 'radar');
+      }
     } else if (msg.type === 'PROJECT_CARD') {
       setProjectedCard(msg.payload.card);
     } else if (msg.type === 'TABLE_CARDS_SYNC') {
       setPinnedCards(msg.payload.cards);
+    } else if (msg.type === 'SETTINGS_SYNC') {
+      setProjectorSettings(msg.payload);
     } else if (msg.type === 'MEDIA_CHANGE') {
       const { media: newMedia, dataUrl } = msg.payload;
       const targetUrl = dataUrl || newMedia.url;
@@ -384,6 +458,11 @@ export const PlayerView: React.FC = () => {
             alt={media.name || 'Battle Map'}
             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
             draggable={false}
+            style={{
+              filter: `brightness(${projectorSettings.brightness}) contrast(${projectorSettings.contrast}) ${
+                projectorSettings.invertColors ? 'invert(1) hue-rotate(180deg)' : ''
+              }`,
+            }}
           />
         )}
 
@@ -395,11 +474,16 @@ export const PlayerView: React.FC = () => {
             muted
             playsInline
             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+            style={{
+              filter: `brightness(${projectorSettings.brightness}) contrast(${projectorSettings.contrast}) ${
+                projectorSettings.invertColors ? 'invert(1) hue-rotate(180deg)' : ''
+              }`,
+            }}
           />
         )}
 
         {/* Слой 2: Тактическая сетка */}
-        {grid.enabled && (
+        {grid.enabled && projectorSettings.showGridOnPlayer && (
           <div
             id="player-grid-overlay"
             className="absolute inset-0 pointer-events-none"
@@ -420,19 +504,42 @@ export const PlayerView: React.FC = () => {
           style={{ width: `${media.width}px`, height: `${media.height}px` }}
         />
 
-        {/* Слой 4: Векторные пинги мастера */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
-          {activePings.map((ping) => (
-            <g key={ping.id} transform={`translate(${ping.x}, ${ping.y})`}>
-              <circle r={24 / viewport.scale} fill="none" stroke={ping.color} strokeWidth={3.5 / viewport.scale}>
-                <animate attributeName="r" from="6" to={48 / viewport.scale} dur="1.2s" repeatCount="indefinite" />
-                <animate attributeName="opacity" from="1" to="0" dur="1.2s" repeatCount="indefinite" />
-              </circle>
-              <circle r={6 / viewport.scale} fill={ping.color} />
-            </g>
-          ))}
-        </svg>
+        {/* Слой 4: Живые Эффекты Карты (Пожар, Вода, Газ, Лазер, Маяки внимания, Маркеры) */}
+        <canvas
+          id="player-map-fx-canvas"
+          ref={mapFxCanvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
+          style={{ width: `${media.width}px`, height: `${media.height}px` }}
+        />
+
+        {/* Слой 5: Векторные пинги мастера */}
+        {projectorSettings.showPingsOnPlayer && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
+            {activePings.map((ping) => (
+              <g key={ping.id} transform={`translate(${ping.x}, ${ping.y})`}>
+                <circle r={24 / viewport.scale} fill="none" stroke={ping.color} strokeWidth={3.5 / viewport.scale}>
+                  <animate attributeName="r" from="6" to={48 / viewport.scale} dur="1.2s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" from="1" to="0" dur="1.2s" repeatCount="indefinite" />
+                </circle>
+                <circle r={6 / viewport.scale} fill={ping.color} />
+              </g>
+            ))}
+          </svg>
+        )}
       </div>
+
+      {/* Оверлей Блэкаута (Черный экран "Театр теней") */}
+      {projectorSettings.blackout && (
+        <div
+          id="player-blackout-curtain"
+          className="absolute inset-0 z-40 bg-black flex flex-col items-center justify-center text-zinc-600 transition-opacity duration-500"
+        >
+          <EyeOff className="w-12 h-12 mb-3 text-zinc-700 animate-pulse" />
+          <span className="text-xs uppercase tracking-widest font-mono text-zinc-500">
+            Сцена скрыта Мастером
+          </span>
+        </div>
+      )}
 
       {/* Оверлей спроецированной карточки монстра/предмета/NPC/заклинания */}
       <PlayerCardOverlay card={projectedCard} onDismiss={() => setProjectedCard(null)} />
