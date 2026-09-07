@@ -54,6 +54,8 @@ import { AudioEngineState } from '@/lib/audio/types';
 import { AppSettingsModal } from '@/components/settings/AppSettingsModal';
 import { AppSettings, getInitialSettingsSync, loadAppSettings } from '@/lib/appSettings';
 import { PhotoshopMapToolbar } from '@/components/dm/PhotoshopMapToolbar';
+import { PlayerFrameOverlay, PlayerRegion } from '@/components/dm/PlayerFrameOverlay';
+import { PlayerViewportPanel } from '@/components/dm/PlayerViewportPanel';
 import {
   GasVariant,
   WaterVariant,
@@ -197,9 +199,32 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, scale: 1 });
   const [syncCameraWithPlayer, setSyncCameraWithPlayer] = useState<boolean>(false);
 
-  // --- Состояние экрана игроков и рамки обзора (Player Viewport Frustum) ---
+  // --- Состояние экрана игроков и интерактивной рамки обзора (Player Viewport Region) ---
   const [playerViewportInfo, setPlayerViewportInfo] = useState<PlayerViewportInfo | null>(null);
   const [showPlayerFrustum, setShowPlayerFrustum] = useState<boolean>(true);
+  const playerViewportInfoRef = useRef<PlayerViewportInfo | null>(null);
+
+  // Независимая рамка экрана игроков в координатах карты
+  const [playerRegion, setPlayerRegion] = useState<PlayerRegion>(() => {
+    const defaultList = getDefaultPresetLocations();
+    const targetLoc = defaultList[0];
+    const mapW = targetLoc?.width || 1600;
+    const mapH = targetLoc?.height || 1200;
+    const initW = Math.min(mapW, 1920);
+    const initH = Math.round(initW / (16 / 9));
+    return {
+      x: Math.round((mapW - initW) / 2),
+      y: Math.round((mapH - initH) / 2),
+      width: initW,
+      height: initH,
+      isLocked: false,
+      aspectMode: 'auto',
+    };
+  });
+  const playerRegionRef = useRef<PlayerRegion>(playerRegion);
+  useEffect(() => {
+    playerRegionRef.current = playerRegion;
+  }, [playerRegion]);
 
   // --- Инструменты тумана и взаимодействия ---
   const [brushMode, setBrushModeInternal] = useState<BrushMode>('reveal');
@@ -574,6 +599,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         setPlayerConnected(true);
         lastHeartbeatRef.current = Date.now();
         setPlayerViewportInfo(msg.payload);
+        playerViewportInfoRef.current = msg.payload;
       } else if (msg.type === 'HEARTBEAT' && msg.role === 'player') {
         setPlayerConnected(true);
         lastHeartbeatRef.current = Date.now();
@@ -1298,81 +1324,152 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     };
   }, [handleFilesDrop]);
 
-  // 12. Точный контроль камеры игроков (Player Viewport Controls)
-  const handlePushViewToPlayer = useCallback(() => {
-    if (!playerViewportInfo) {
-      syncRef.current?.send({
-        type: 'VIEWPORT_SYNC',
-        payload: viewport,
-        timestamp: Date.now(),
-      });
-      showToast('Камера игроков синхронизирована с видом мастера');
-      return;
-    }
-
-    // Рассчитываем центральную точку карты на экране мастера
-    const dmContainerRect = containerRef.current?.getBoundingClientRect();
-    const dmWidth = dmContainerRect?.width || 1200;
-    const dmHeight = dmContainerRect?.height || 800;
-
-    const dmCenterMapX = (dmWidth / 2 - viewport.x) / viewport.scale;
-    const dmCenterMapY = (dmHeight / 2 - viewport.y) / viewport.scale;
-
-    const pW = playerViewportInfo.windowWidth || 1920;
-    const pH = playerViewportInfo.windowHeight || 1080;
-    const targetPlayerScale = viewport.scale;
-    const targetPlayerX = pW / 2 - dmCenterMapX * targetPlayerScale;
-    const targetPlayerY = pH / 2 - dmCenterMapY * targetPlayerScale;
-
-    const targetPlayerViewport: ViewportTransform = {
-      x: Math.round(targetPlayerX),
-      y: Math.round(targetPlayerY),
-      scale: targetPlayerScale,
+  // 12. Точный контроль камеры и независимой рамки игроков (Player Viewport Controls)
+  const syncPlayerRegionToViewport = useCallback((r: PlayerRegion) => {
+    const pW = playerViewportInfoRef.current?.windowWidth || 1920;
+    const pH = playerViewportInfoRef.current?.windowHeight || 1080;
+    const scale = pW / r.width;
+    const targetX = -r.x * scale;
+    const targetY = -r.y * scale;
+    const targetVp: ViewportTransform = {
+      x: Math.round(targetX),
+      y: Math.round(targetY),
+      scale,
     };
 
     syncRef.current?.send({
       type: 'VIEWPORT_SYNC',
-      payload: targetPlayerViewport,
+      payload: targetVp,
       timestamp: Date.now(),
     });
 
     setPlayerViewportInfo((prev) =>
-      prev ? { ...prev, viewport: targetPlayerViewport } : null
+      prev ? { ...prev, viewport: targetVp } : null
     );
+  }, []);
 
-    showToast('✓ Игроки точно сфокусированы на вашей области карты');
-  }, [playerViewportInfo, viewport, showToast]);
+  const handleChangePlayerRegion = useCallback(
+    (newRegion: PlayerRegion, syncToPlayer: boolean = true) => {
+      setPlayerRegion(newRegion);
+      playerRegionRef.current = newRegion;
+      if (syncToPlayer) {
+        syncPlayerRegionToViewport(newRegion);
+      }
+    },
+    [syncPlayerRegionToViewport]
+  );
 
-  const handleSnapToPlayerView = useCallback(() => {
-    if (!playerViewportInfo) {
-      showToast('Экран игроков не подключен');
+  const handleCenterDMOnPlayer = useCallback(() => {
+    const dmContainerRect = containerRef.current?.getBoundingClientRect();
+    const dmW = dmContainerRect?.width || 1200;
+    const dmH = dmContainerRect?.height || 800;
+
+    const r = playerRegionRef.current;
+    const centerX = r.x + r.width / 2;
+    const centerY = r.y + r.height / 2;
+
+    const targetScale = Math.min(dmW / r.width, dmH / r.height) * 0.85;
+    const clampedScale = Math.max(0.15, Math.min(3.0, targetScale));
+
+    const targetX = Math.round(dmW / 2 - centerX * clampedScale);
+    const targetY = Math.round(dmH / 2 - centerY * clampedScale);
+
+    const nextVp: ViewportTransform = { x: targetX, y: targetY, scale: clampedScale };
+    setViewport(nextVp);
+    dragViewportRef.current = nextVp;
+    if (mapContainerRef.current) {
+      mapContainerRef.current.style.transform = `translate3d(${nextVp.x}px, ${nextVp.y}px, 0px) scale(${nextVp.scale})`;
+    }
+    showToast('Вид мастера сфокусирован на рамке игроков');
+  }, [showToast]);
+
+  const handleCenterPlayerOnDM = useCallback(() => {
+    if (playerRegionRef.current.isLocked) {
+      showToast('🔒 Положение экрана игроков зафиксировано (заблокировано)');
       return;
     }
-    setViewport(playerViewportInfo.viewport);
-    showToast('Вид мастера выровнен по рамке экрана игроков');
-  }, [playerViewportInfo, showToast]);
+    const dmContainerRect = containerRef.current?.getBoundingClientRect();
+    const dmW = dmContainerRect?.width || 1200;
+    const dmH = dmContainerRect?.height || 800;
+
+    const curVp = viewportRef.current;
+    const dmCenterMapX = (dmW / 2 - curVp.x) / curVp.scale;
+    const dmCenterMapY = (dmH / 2 - curVp.y) / curVp.scale;
+
+    const r = playerRegionRef.current;
+    const newRegion: PlayerRegion = {
+      ...r,
+      x: Math.round(dmCenterMapX - r.width / 2),
+      y: Math.round(dmCenterMapY - r.height / 2),
+    };
+
+    handleChangePlayerRegion(newRegion, true);
+    showToast('✓ Экран игроков перемещен в центр экрана мастера');
+  }, [handleChangePlayerRegion, showToast]);
 
   const handleFitPlayerToMap = useCallback(() => {
-    if (!playerViewportInfo) {
-      showToast('Экран игроков не подключен');
+    if (playerRegionRef.current.isLocked) {
+      showToast('🔒 Положение экрана игроков зафиксировано (заблокировано)');
       return;
     }
-    const pW = playerViewportInfo.windowWidth || 1920;
-    const pH = playerViewportInfo.windowHeight || 1080;
-    const scale = Math.min(pW / media.width, pH / media.height) * 0.96;
-    const x = Math.round((pW - media.width * scale) / 2);
-    const y = Math.round((pH - media.height * scale) / 2);
-    const fitVp: ViewportTransform = { x, y, scale };
+    const pW = playerViewportInfoRef.current?.windowWidth || 1920;
+    const pH = playerViewportInfoRef.current?.windowHeight || 1080;
+    const curMedia = mediaRef.current;
+    const scale = Math.min(pW / curMedia.width, pH / curMedia.height) * 0.96;
+    const width = Math.round(pW / scale);
+    const height = Math.round(pH / scale);
+    const x = Math.round((curMedia.width - width) / 2);
+    const y = Math.round((curMedia.height - height) / 2);
 
-    syncRef.current?.send({
-      type: 'VIEWPORT_SYNC',
-      payload: fitVp,
-      timestamp: Date.now(),
-    });
+    const newRegion: PlayerRegion = {
+      ...playerRegionRef.current,
+      x,
+      y,
+      width,
+      height,
+    };
 
-    setPlayerViewportInfo((prev) => (prev ? { ...prev, viewport: fitVp } : null));
+    handleChangePlayerRegion(newRegion, true);
     showToast('✓ Вся карта подогнана на экране игроков');
-  }, [playerViewportInfo, media.width, media.height, showToast]);
+  }, [handleChangePlayerRegion, showToast]);
+
+  const handleResetPlayerZoom = useCallback(() => {
+    if (playerRegionRef.current.isLocked) {
+      showToast('🔒 Положение экрана игроков зафиксировано (заблокировано)');
+      return;
+    }
+    const pW = playerViewportInfoRef.current?.windowWidth || 1920;
+    const pH = playerViewportInfoRef.current?.windowHeight || 1080;
+    const r = playerRegionRef.current;
+    const centerX = r.x + r.width / 2;
+    const centerY = r.y + r.height / 2;
+
+    const newWidth = pW;
+    const newHeight = pH;
+    const newRegion: PlayerRegion = {
+      ...r,
+      x: Math.round(centerX - newWidth / 2),
+      y: Math.round(centerY - newHeight / 2),
+      width: newWidth,
+      height: newHeight,
+    };
+
+    handleChangePlayerRegion(newRegion, true);
+    showToast('Масштаб экрана игроков сброшен на 100%');
+  }, [handleChangePlayerRegion, showToast]);
+
+  const handleToggleLockPlayerRegion = useCallback(() => {
+    setPlayerRegion((prev) => {
+      const next = { ...prev, isLocked: !prev.isLocked };
+      playerRegionRef.current = next;
+      showToast(
+        next.isLocked
+          ? '🔒 Положение экрана игроков ЗАФИКСИРОВАНО (защищено от смещений)'
+          : '🔓 Положение экрана игроков РАЗБЛОКИРОВАНО (доступно для перемещения)'
+      );
+      return next;
+    });
+  }, [showToast]);
 
   // 13. Действия с туманом: Скрыть всё / Открыть всё
   const handleFogFillAll = useCallback(() => {
@@ -2064,6 +2161,29 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       if (e.key.toLowerCase() === 'e') setBrushMode('eraser');
 
       // Базовые клавиши
+      if (e.altKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        handleToggleLockPlayerRegion();
+        return;
+      }
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        if (playerRegionRef.current.isLocked) {
+          showToast('🔒 Положение экрана игроков зафиксировано');
+          return;
+        }
+        const step = gridRef.current.enabled && gridRef.current.size > 0 ? gridRef.current.size : 50;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        const next: PlayerRegion = {
+          ...playerRegionRef.current,
+          x: Math.round(playerRegionRef.current.x + dx),
+          y: Math.round(playerRegionRef.current.y + dy),
+        };
+        handleChangePlayerRegion(next, true);
+        return;
+      }
+
       if (e.key.toLowerCase() === 'r') setBrushMode('reveal');
       if (e.key.toLowerCase() === 'h') setBrushMode('hide');
       if (e.key.toLowerCase() === 'm' && !e.shiftKey) setBrushMode('measure');
@@ -2296,65 +2416,29 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       <aside id="dm-sidebar" className="sidebar">
         <section className="panel-section">
           <div className="flex justify-between items-center mb-2">
-            <span className="label-meta mb-0">01 // Viewing Port</span>
-            <button
-              onClick={() => setShowPlayerFrustum(!showPlayerFrustum)}
-              className="label-meta cursor-pointer"
-              style={{ color: showPlayerFrustum ? '#38bdf8' : 'var(--ink-muted)' }}
-              title="Включить / отключить рамку обзора игроков на столе мастера"
-            >
-              {showPlayerFrustum ? '[РАМКА: ВКЛ]' : '[РАМКА: ВЫКЛ]'}
-            </button>
+            <span className="label-meta mb-0 text-[#38bdf8] font-bold">01 // Экран игроков</span>
+            <span className="text-[9px] font-mono text-[var(--ink-muted)]">
+              {playerRegion.isLocked ? '🔒 ЗАФИКСИРОВАН' : '🔓 СВОБОДЕН'}
+            </span>
           </div>
 
-          {playerViewportInfo && (
-            <div className="text-[9px] text-[#94a3b8] flex items-center justify-between font-mono bg-[#090d16] px-2 py-1 rounded-sm border border-[var(--ink-faint)] mb-2">
-              <span>Экран: {playerViewportInfo.windowWidth}×{playerViewportInfo.windowHeight}</span>
-              <span className="text-[#38bdf8]">Зум: {Math.round(playerViewportInfo.viewport.scale * 100)}%</span>
-            </div>
-          )}
-
-          <div className="btn-grid">
-            <button
-              id="btn-push-view-to-player"
-              onClick={handlePushViewToPlayer}
-              className="btn"
-              title="Центрировать экран игроков точно на вашей текущей области стола"
-            >
-              <Target className="w-3 h-3 text-[#38bdf8]" />
-              <span>Сфокусировать</span>
-            </button>
-
-            <button
-              id="btn-fit-player-to-map"
-              onClick={handleFitPlayerToMap}
-              className="btn"
-              title="Подогнать всю карту целиком в окно игроков"
-            >
-              <Maximize2 className="w-3 h-3 text-[var(--ink-muted)]" />
-              <span>Всю карту</span>
-            </button>
-
-            <button
-              id="btn-snap-dm-to-player"
-              onClick={handleSnapToPlayerView}
-              className="btn"
-              title="Переместить камеру мастера к текущему положению экрана игроков"
-            >
-              <Crosshair className="w-3 h-3 text-[var(--ink-muted)]" />
-              <span>К виду игроков</span>
-            </button>
-
-            <button
-              id="btn-sync-camera-toggle"
-              onClick={() => setSyncCameraWithPlayer(!syncCameraWithPlayer)}
-              className={`btn ${syncCameraWithPlayer ? 'btn-accent' : ''}`}
-              title="Автоматически двигать камеру игроков при панорамировании мастера"
-            >
-              <Radio className="w-3 h-3" />
-              <span>{syncCameraWithPlayer ? 'Авто-зум: ВКЛ' : 'Авто-зум: СВОБ'}</span>
-            </button>
-          </div>
+          <PlayerViewportPanel
+            region={playerRegion}
+            onChangeRegion={handleChangePlayerRegion}
+            grid={grid}
+            playerWindowWidth={playerViewportInfo?.windowWidth || 1920}
+            playerWindowHeight={playerViewportInfo?.windowHeight || 1080}
+            isPlayerConnected={playerConnected}
+            showPlayerFrustum={showPlayerFrustum}
+            onToggleShowFrustum={() => setShowPlayerFrustum((prev) => !prev)}
+            syncCameraWithPlayer={syncCameraWithPlayer}
+            onToggleSyncCamera={() => setSyncCameraWithPlayer((prev) => !prev)}
+            onCenterDMOnPlayer={handleCenterDMOnPlayer}
+            onCenterPlayerOnDM={handleCenterPlayerOnDM}
+            onFitPlayerToMap={handleFitPlayerToMap}
+            onResetZoom={handleResetPlayerZoom}
+            onOpenPlayerWindow={onOpenPlayerWindow}
+          />
         </section>
 
         <section className="panel-section">
@@ -2842,42 +2926,24 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
               style={{ width: `${media.width}px`, height: `${media.height}px` }}
             />
 
-            {/* Слой 5: Рамка обзора экрана игроков (Player Viewport Frustum Frame) */}
-            {showPlayerFrustum && playerFrustumRect && (
-              <div
-                id="player-viewport-frustum-frame"
-                className="absolute pointer-events-none transition-all duration-75 z-20"
-                style={{
-                  left: `${playerFrustumRect.left}px`,
-                  top: `${playerFrustumRect.top}px`,
-                  width: `${playerFrustumRect.width}px`,
-                  height: `${playerFrustumRect.height}px`,
-                }}
-              >
-                {/* Неоновая светящаяся рамка */}
-                <div className="absolute inset-0 border-2 border-dashed border-[#38bdf8] shadow-[0_0_20px_rgba(56,189,248,0.45)] rounded-sm" />
-
-                {/* Угловые прицелы мастера */}
-                <div className="absolute -top-2 -left-2 w-5 h-5 border-t-2 border-l-2 border-[#ff4e00]" />
-                <div className="absolute -top-2 -right-2 w-5 h-5 border-t-2 border-r-2 border-[#ff4e00]" />
-                <div className="absolute -bottom-2 -left-2 w-5 h-5 border-b-2 border-l-2 border-[#ff4e00]" />
-                <div className="absolute -bottom-2 -right-2 w-5 h-5 border-b-2 border-r-2 border-[#ff4e00]" />
-
-                {/* Плавающий бейдж с телеметрией проектора */}
-                <div
-                  className="absolute top-2 left-2 bg-[#090d16]/95 border border-[#38bdf8]/80 text-[#38bdf8] text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-xl flex items-center gap-1.5 uppercase "
-                  style={{
-                    transform: `scale(${Math.max(0.5, 1 / viewport.scale)})`,
-                    transformOrigin: 'top left',
-                  }}
-                >
-                  <Tv className="w-3 h-3 text-[#10b981] animate-pulse" />
-                  <span>
-                    ВИД ИГРОКОВ ({playerViewportInfo?.windowWidth}×{playerViewportInfo?.windowHeight}) •{' '}
-                    {Math.round(playerFrustumRect.scale * 100)}%
-                  </span>
-                </div>
-              </div>
+            {/* Слой 5: Интерактивная рамка экрана игроков (Player Frame Overlay: Drag, Resize, Lock, Aspect, Measurement) */}
+            {showPlayerFrustum && (
+              <PlayerFrameOverlay
+                region={playerRegion}
+                onChangeRegion={handleChangePlayerRegion}
+                dmViewport={viewport}
+                mapWidth={media.width}
+                mapHeight={media.height}
+                grid={grid}
+                playerWindowWidth={playerViewportInfo?.windowWidth || 1920}
+                playerWindowHeight={playerViewportInfo?.windowHeight || 1080}
+                isPlayerConnected={playerConnected}
+                onCenterDMOnPlayer={handleCenterDMOnPlayer}
+                onCenterPlayerOnDM={handleCenterPlayerOnDM}
+                onFitPlayerToMap={handleFitPlayerToMap}
+                onToggleLock={handleToggleLockPlayerRegion}
+                onResetPlayerZoom={handleResetPlayerZoom}
+              />
             )}
 
             {/* Слой 5: Векторные маркеры (Пинги и Измерения) */}
