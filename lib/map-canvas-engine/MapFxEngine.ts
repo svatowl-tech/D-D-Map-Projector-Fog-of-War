@@ -58,24 +58,65 @@ export class MapFxEngine {
   private isRunning: boolean = false;
   private lastTime: number = 0;
   private timeOffset: number = 0;
+  private lastParticleUpdate: number = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: true });
-    this.start();
+    this.ctx =
+      canvas.getContext('2d', { alpha: true, desynchronized: true }) ||
+      canvas.getContext('2d', { alpha: true }) ||
+      canvas.getContext('2d');
+    this.requestFrame();
   }
 
   public resize(width: number, height: number) {
-    this.width = Math.max(100, Math.floor(width));
-    this.height = Math.max(100, Math.floor(height));
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
+    // Ограничение максимального разрешения буфера для предотвращения переполнения VRAM на слабых GPU
+    const MAX_DIM = 2560;
+    let targetW = Math.max(100, Math.floor(width));
+    let targetH = Math.max(100, Math.floor(height));
+    if (targetW > MAX_DIM || targetH > MAX_DIM) {
+      const scale = Math.min(MAX_DIM / targetW, MAX_DIM / targetH);
+      targetW = Math.round(targetW * scale);
+      targetH = Math.round(targetH * scale);
+    }
+    if (this.width !== targetW || this.height !== targetH) {
+      this.width = targetW;
+      this.height = targetH;
+      this.canvas.width = this.width;
+      this.canvas.height = this.height;
+      this.requestFrame();
+    }
+  }
+
+  /**
+   * Проверка, есть ли в текущий момент эффекты, требующие непрерывной 60 FPS анимации.
+   * Если эффектов нет — движок засыпает (0% CPU/GPU нагрузки).
+   */
+  public hasAnimatedEffects(): boolean {
+    if (this.laser !== null && this.laser.active) return true;
+    if (this.beacons.length > 0) return true;
+    if (this.embers.length > 0) return true;
+    if (this.gasParticles.length > 0) return true;
+    for (let i = 0; i < this.strokes.length; i++) {
+      const tool = this.strokes[i].tool;
+      if (tool === 'fire' || tool === 'water' || tool === 'gas') return true;
+    }
+    return false;
+  }
+
+  public requestFrame() {
+    if (this.hasAnimatedEffects()) {
+      this.start();
+    } else {
+      this.render();
+    }
   }
 
   public start() {
     if (this.isRunning) return;
     this.isRunning = true;
     this.lastTime = performance.now();
+    this.lastParticleUpdate = performance.now();
     this.loop();
   }
 
@@ -101,14 +142,18 @@ export class MapFxEngine {
 
   public setStrokes(strokes: MapFxStroke[]) {
     this.strokes = [...strokes];
+    this.requestFrame();
   }
 
   public addStroke(stroke: MapFxStroke) {
     this.strokes.push(stroke);
+    this.requestFrame();
   }
 
   public removeLastStroke() {
-    return this.strokes.pop();
+    const popped = this.strokes.pop();
+    this.requestFrame();
+    return popped;
   }
 
   public clearAll() {
@@ -118,26 +163,39 @@ export class MapFxEngine {
     this.embers = [];
     this.gasParticles = [];
     this.laser = null;
+    if (this.ctx) {
+      this.ctx.clearRect(0, 0, this.width, this.height);
+    }
+    this.stop();
   }
 
   public setSpellZones(zones: SpellZoneArea[]) {
     this.spellZones = [...zones];
+    this.requestFrame();
   }
 
   public addSpellZone(zone: SpellZoneArea) {
     this.spellZones.push(zone);
+    this.requestFrame();
   }
 
   public removeSpellZone(id: string) {
     this.spellZones = this.spellZones.filter((z) => z.id !== id);
+    this.requestFrame();
   }
 
   public setLaser(laser: LaserPointerState | null) {
     this.laser = laser;
+    if (laser && laser.active) {
+      this.start();
+    } else {
+      this.requestFrame();
+    }
   }
 
   public addBeacon(beacon: AttentionBeacon) {
     this.beacons.push(beacon);
+    this.start();
   }
 
   // Ластик в заданной точке
@@ -163,6 +221,7 @@ export class MapFxEngine {
       const dy = centerY - point.y;
       return dx * dx + dy * dy > rSq * 2;
     });
+    this.requestFrame();
   }
 
   // --- Основной цикл рендеринга ---
@@ -175,8 +234,18 @@ export class MapFxEngine {
     this.lastTime = now;
     this.timeOffset += dt;
 
-    this.updateParticles(dt);
+    if (now - this.lastParticleUpdate > 28) {
+      this.updateParticles(dt);
+      this.lastParticleUpdate = now;
+    }
     this.render();
+
+    // Интеллектуальный сон: если на холсте больше нет динамических анимированных эффектов
+    if (!this.hasAnimatedEffects()) {
+      this.render(); // финальный чистый статический проход
+      this.stop();
+      return;
+    }
 
     this.animFrameId = requestAnimationFrame(this.loop);
   };
@@ -192,11 +261,11 @@ export class MapFxEngine {
       this.laser.trail = this.laser.trail.filter((t) => now - t.timestamp < 1200);
     }
 
-    // Спавн частиц огня (Embers) из штрихов огня
+    // Спавн частиц огня (Embers) из штрихов огня (оптимизировано под слабый CPU)
     const fireStrokes = this.strokes.filter((s) => s.tool === 'fire');
-    if (fireStrokes.length > 0 && this.embers.length < 180) {
+    if (fireStrokes.length > 0 && this.embers.length < 35) {
       for (const stroke of fireStrokes) {
-        if (Math.random() < 0.35 && stroke.points.length > 0) {
+        if (Math.random() < 0.2 && stroke.points.length > 0) {
           const pt = stroke.points[Math.floor(Math.random() * stroke.points.length)];
           const angle = Math.random() * Math.PI * 2;
           const dist = Math.random() * (stroke.brushSize * 0.4);
@@ -228,11 +297,11 @@ export class MapFxEngine {
       }
     }
 
-    // Спавн частиц газа/дыма
+    // Спавн частиц газа/дыма (оптимизировано под слабый CPU)
     const gasStrokes = this.strokes.filter((s) => s.tool === 'gas');
-    if (gasStrokes.length > 0 && this.gasParticles.length < 120) {
+    if (gasStrokes.length > 0 && this.gasParticles.length < 25) {
       for (const stroke of gasStrokes) {
-        if (Math.random() < 0.25 && stroke.points.length > 0) {
+        if (Math.random() < 0.18 && stroke.points.length > 0) {
           const pt = stroke.points[Math.floor(Math.random() * stroke.points.length)];
           const angle = Math.random() * Math.PI * 2;
           const dist = Math.random() * (stroke.brushSize * 0.45);

@@ -13,9 +13,11 @@ export class FogEngine {
   private height: number = 0;
   private fogOpacity: number = 0.55; // Прозрачность тумана для мастера
 
+  private scaleFactor: number = 1;
+
   constructor(canvas: HTMLCanvasElement, isDM: boolean = false) {
     this.canvas = canvas;
-    const context = canvas.getContext('2d', { alpha: true });
+    const context = canvas.getContext('2d', { alpha: true, desynchronized: true }) || canvas.getContext('2d', { alpha: true });
     if (!context) {
       throw new Error('Canvas 2D context not supported');
     }
@@ -24,14 +26,31 @@ export class FogEngine {
   }
 
   /**
-   * Установка размера холста тумана под реальный размер карты
+   * Установка размера холста тумана под реальный размер карты с защитой от переполнения VRAM
    */
   public resize(width: number, height: number) {
-    if (this.width === width && this.height === height) return;
-    this.width = Math.max(1, width);
-    this.height = Math.max(1, height);
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
+    const rawW = Math.max(1, width);
+    const rawH = Math.max(1, height);
+    if (this.width === rawW && this.height === rawH) return;
+
+    this.width = rawW;
+    this.height = rawH;
+
+    // Ограничение буфера текстуры до 2560px для защиты старых GPU от исчерпания памяти
+    const MAX_DIM = 2560;
+    let targetW = rawW;
+    let targetH = rawH;
+    if (rawW > MAX_DIM || rawH > MAX_DIM) {
+      const s = Math.min(MAX_DIM / rawW, MAX_DIM / rawH);
+      targetW = Math.round(rawW * s);
+      targetH = Math.round(rawH * s);
+      this.scaleFactor = targetW / rawW;
+    } else {
+      this.scaleFactor = 1;
+    }
+
+    this.canvas.width = targetW;
+    this.canvas.height = targetH;
   }
 
   /**
@@ -48,7 +67,7 @@ export class FogEngine {
     this.ctx.save();
     this.ctx.globalCompositeOperation = 'source-over';
     this.ctx.fillStyle = this.isDM ? `rgba(0, 0, 0, ${this.fogOpacity})` : '#000000';
-    this.ctx.fillRect(0, 0, this.width, this.height);
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.restore();
   }
 
@@ -56,7 +75,7 @@ export class FogEngine {
    * Открыть всю карту (очистить туман полностью)
    */
   public clearAll() {
-    this.ctx.clearRect(0, 0, this.width, this.height);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   /**
@@ -67,6 +86,9 @@ export class FogEngine {
     if (!points || points.length === 0) return;
 
     this.ctx.save();
+    if (this.scaleFactor !== 1) {
+      this.ctx.scale(this.scaleFactor, this.scaleFactor);
+    }
     this.ctx.lineCap = 'round';
     this.ctx.lineJoin = 'round';
     this.ctx.lineWidth = brushSize;

@@ -52,6 +52,7 @@ header.app-header {
   padding: 0 1.5rem;
   border-bottom: 1px solid var(--ink-faint);
   z-index: 30;
+  contain: content;
 }
 
 aside.sidebar {
@@ -62,6 +63,7 @@ aside.sidebar {
   display: flex;
   flex-direction: column;
   z-index: 20;
+  contain: content;
 }
 
 aside.tools {
@@ -71,6 +73,7 @@ aside.tools {
   flex-direction: column;
   overflow-y: auto;
   z-index: 20;
+  contain: content;
 }
 
 .viewport-container {
@@ -80,6 +83,22 @@ aside.tools {
   display: flex;
   align-items: center;
   justify-content: center;
+  contain: layout size style;
+}
+
+/* Аппаратное ускорение и изоляция композитинга для слабого железа */
+#map-transform-layer,
+#player-transform-layer {
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform-style: flat;
+}
+
+/* Отключение тяжелых шейдеров размытия GPU, вызывающих фризы на встроенной графике Intel/GeForce */
+[class*="backdrop-blur"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 h1, h2, h3, h4, h5, h6, .brand-title, .font-display {
@@ -109,6 +128,10 @@ h1, h2, h3, h4, h5, h6, .brand-title, .font-display {
 /* Blueprint Grid */
 .blueprint-grid {
   position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   inset: 0;
   background-image: 
     linear-gradient(var(--ink-faint) 1px, transparent 1px),
@@ -253,11 +276,13 @@ input[type="range"] {
   height: 2px;
   background: var(--ink-faint);
   appearance: none;
+  -webkit-appearance: none;
   cursor: pointer;
 }
 
 input[type="range"]::-webkit-slider-thumb {
   appearance: none;
+  -webkit-appearance: none;
   width: 10px;
   height: 10px;
   background: var(--accent);
@@ -286,3 +311,48 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: var(--accent);
   color: #fff;
 }
+
+/* ==========================================================================
+   macOS 10.13 (High Sierra) & Safari 13 Compatibility Shims
+   ========================================================================== */
+
+/* Fallback для inset в Safari 13 (введен в Safari 14.1) */
+[class*="inset-0"] {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+[class*="inset-x-0"] {
+  left: 0;
+  right: 0;
+}
+[class*="inset-y-0"] {
+  top: 0;
+  bottom: 0;
+}
+
+/* Fallback для aspect-ratio в Safari 13 */
+@supports not (aspect-ratio: 16 / 9) {
+  .aspect-video {
+    min-height: 190px;
+  }
+}
+
+/* Fallback для Flexbox Gap в Safari 13 (активируется через класс no-flex-gap) */
+.no-flex-gap .flex.gap-1 > * + * { margin-left: 0.25rem; }
+.no-flex-gap .flex.gap-1\.5 > * + * { margin-left: 0.375rem; }
+.no-flex-gap .flex.gap-2 > * + * { margin-left: 0.5rem; }
+.no-flex-gap .flex.gap-2\.5 > * + * { margin-left: 0.625rem; }
+.no-flex-gap .flex.gap-3 > * + * { margin-left: 0.75rem; }
+.no-flex-gap .flex.gap-4 > * + * { margin-left: 1rem; }
+.no-flex-gap .flex.gap-6 > * + * { margin-left: 1.5rem; }
+
+.no-flex-gap .flex.flex-col.gap-1 > * + * { margin-left: 0; margin-top: 0.25rem; }
+.no-flex-gap .flex.flex-col.gap-1\.5 > * + * { margin-left: 0; margin-top: 0.375rem; }
+.no-flex-gap .flex.flex-col.gap-2 > * + * { margin-left: 0; margin-top: 0.5rem; }
+.no-flex-gap .flex.flex-col.gap-2\.5 > * + * { margin-left: 0; margin-top: 0.625rem; }
+.no-flex-gap .flex.flex-col.gap-3 > * + * { margin-left: 0; margin-top: 0.75rem; }
+.no-flex-gap .flex.flex-col.gap-4 > * + * { margin-left: 0; margin-top: 1rem; }
+.no-flex-gap .flex.flex-col.gap-6 > * + * { margin-left: 0; margin-top: 1.5rem; }
+

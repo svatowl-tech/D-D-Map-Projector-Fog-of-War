@@ -9,6 +9,7 @@ const CHANNEL_NAME = 'dnd-projector-channel';
 const STORAGE_KEY = '__dnd_projector_sync__';
 
 export class SyncController {
+  private static seqCounter = 0;
   private channel: BroadcastChannel | null = null;
   private onMessageCallback: (msg: SyncMessage) => void;
   private hasBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window;
@@ -42,10 +43,17 @@ export class SyncController {
     } catch (err) {
       console.warn('[SyncController] storage event listener error:', err);
     }
+
+    // Третий резервный канал: direct window.postMessage bridge (для Safari 13 Private Browsing mode)
+    try {
+      window.addEventListener('message', this.handleWindowMessage);
+    } catch {
+      // noop
+    }
   }
 
   private processMessage(msg: SyncMessage) {
-    if (this.isDestroyed) return;
+    if (this.isDestroyed || !msg) return;
     // Дедупликация сообщений для предотвращения двойного срабатывания
     if (msg.timestamp && msg.timestamp <= this.lastProcessedTimestamp) {
       // Исключаем HEARTBEAT, PING, LASER_SYNC, ATTENTION_BEACON и MAP_FX_STROKE от дедупликации
@@ -70,11 +78,19 @@ export class SyncController {
     if (this.isDestroyed) return;
     if (event.key === STORAGE_KEY && event.newValue) {
       try {
-        const msg: SyncMessage = JSON.parse(event.newValue);
+        const parsed = JSON.parse(event.newValue);
+        const msg: SyncMessage = parsed && parsed.__payload ? parsed.__payload : parsed;
         this.processMessage(msg);
       } catch (err) {
         console.error('[SyncController] Ошибка парсинга сообщения localStorage:', err);
       }
+    }
+  };
+
+  private handleWindowMessage = (event: MessageEvent) => {
+    if (this.isDestroyed || !event.data) return;
+    if (event.data && event.data.__dnd_sync_channel === CHANNEL_NAME && event.data.payload) {
+      this.processMessage(event.data.payload);
     }
   };
 
@@ -98,11 +114,38 @@ export class SyncController {
       }
     }
 
-    // 2. Отправка через localStorage для Safari 13 / старых движков macOS 10.13
+    // 2. Отправка через localStorage с уникальным nonce (для Safari 13 / старых движков macOS 10.13)
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messageWithTime));
+      SyncController.seqCounter = (SyncController.seqCounter + 1) % 1000000;
+      const wrappedPayload = {
+        __seq: SyncController.seqCounter,
+        __time: messageWithTime.timestamp,
+        __payload: messageWithTime,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(wrappedPayload));
     } catch {
-      // Игнорируем квоту storage при частых событиях
+      // Игнорируем квоту storage при частых событиях или в Safari Private Browsing
+    }
+
+    // 3. Отправка через direct window.postMessage bridge (родитель <-> проектор)
+    try {
+      if (typeof window !== 'undefined') {
+        const bridgeMsg = {
+          __dnd_sync_channel: CHANNEL_NAME,
+          payload: messageWithTime,
+        };
+        // К дочернему окну проектора (если Мастер)
+        const playerWin = (window as any).__dnd_player_win;
+        if (playerWin && !playerWin.closed && typeof playerWin.postMessage === 'function') {
+          playerWin.postMessage(bridgeMsg, '*');
+        }
+        // К родительскому окну Мастера (если Проектор)
+        if (window.opener && !window.opener.closed && typeof window.opener.postMessage === 'function') {
+          window.opener.postMessage(bridgeMsg, '*');
+        }
+      }
+    } catch {
+      // ignore cross-origin or closed window errors
     }
   }
 
@@ -114,6 +157,7 @@ export class SyncController {
     if (typeof window !== 'undefined') {
       try {
         window.removeEventListener('storage', this.handleStorageEvent);
+        window.removeEventListener('message', this.handleWindowMessage);
       } catch {
         // noop
       }

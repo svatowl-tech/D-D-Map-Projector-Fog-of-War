@@ -279,17 +279,34 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   // Ссылки на актуальное состояние для стабильных колбэков
   const mediaRef = useRef(media);
   const viewportRef = useRef(viewport);
+  const dragViewportRef = useRef(viewport);
+  const containerRectRef = useRef<DOMRect | null>(null);
   const gridRef = useRef(grid);
   const isFogBaseFilledRef = useRef(isFogBaseFilled);
   const projectedCardRef = useRef(projectedCard);
   const pinnedCardsRef = useRef(pinnedCards);
 
   useEffect(() => { mediaRef.current = media; }, [media]);
-  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+  useEffect(() => {
+    viewportRef.current = viewport;
+    dragViewportRef.current = viewport;
+  }, [viewport]);
   useEffect(() => { gridRef.current = grid; }, [grid]);
   useEffect(() => { isFogBaseFilledRef.current = isFogBaseFilled; }, [isFogBaseFilled]);
   useEffect(() => { projectedCardRef.current = projectedCard; }, [projectedCard]);
   useEffect(() => { pinnedCardsRef.current = pinnedCards; }, [pinnedCards]);
+
+  // Кэширование размеров контейнера для исключения forced synchronous layout
+  useEffect(() => {
+    const handleResize = () => {
+      if (containerRef.current) {
+        containerRectRef.current = containerRef.current.getBoundingClientRect();
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize, { passive: true });
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // --- Линейка и измерения ---
   const [measurement, setMeasurement] = useState<Measurement>({
@@ -1392,19 +1409,25 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     showToast('Туман полностью рассеян');
   }, [showToast]);
 
-  // 14. Преобразование координат экрана в координаты карты
+  // 14. Преобразование координат экрана в координаты карты с нулевым Forced Reflow
   const getMapCoordinates = useCallback(
     (clientX: number, clientY: number): { x: number; y: number } => {
-      if (!mapContainerRef.current) return { x: 0, y: 0 };
-      const rect = mapContainerRef.current.getBoundingClientRect();
-      const x = (clientX - rect.left) / viewport.scale;
-      const y = (clientY - rect.top) / viewport.scale;
+      let rect = containerRectRef.current;
+      if (!rect && containerRef.current) {
+        rect = containerRef.current.getBoundingClientRect();
+        containerRectRef.current = rect;
+      }
+      if (!rect) return { x: 0, y: 0 };
+      const curVp = dragViewportRef.current;
+      const curMedia = mediaRef.current;
+      const x = (clientX - rect.left - curVp.x) / curVp.scale;
+      const y = (clientY - rect.top - curVp.y) / curVp.scale;
       return {
-        x: Math.max(0, Math.min(media.width, x)),
-        y: Math.max(0, Math.min(media.height, y)),
+        x: Math.max(0, Math.min(curMedia.width, x)),
+        y: Math.max(0, Math.min(curMedia.height, y)),
       };
     },
-    [viewport.scale, media.width, media.height]
+    []
   );
 
   // Хелперы управления эффектами Photoshop Map FX
@@ -1472,14 +1495,19 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
   // 15. Обработка мыши: Панорамирование, Кисти Photoshop FX, Лазер, Маяки, Туман, Пинг, Измерение
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (containerRef.current) {
+        containerRectRef.current = containerRef.current.getBoundingClientRect();
+      }
+
       if (e.button === 1 || e.button === 2 || isSpacePressedRef.current || brushMode === 'pan') {
         e.preventDefault();
         isDraggingRef.current = true;
+        const curVp = dragViewportRef.current;
         dragStartRef.current = {
           x: e.clientX,
           y: e.clientY,
-          vpX: viewport.x,
-          vpY: viewport.y,
+          vpX: curVp.x,
+          vpY: curVp.y,
         };
         return;
       }
@@ -1651,7 +1679,6 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     },
     [
       brushMode,
-      viewport,
       getMapCoordinates,
       brushSize,
       laserColor,
@@ -1672,22 +1699,24 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       if (isDraggingRef.current) {
         const dx = e.clientX - dragStartRef.current.x;
         const dy = e.clientY - dragStartRef.current.y;
+        const curScale = viewportRef.current.scale;
         const newVp: ViewportTransform = {
-          ...viewport,
           x: dragStartRef.current.vpX + dx,
           y: dragStartRef.current.vpY + dy,
+          scale: curScale,
         };
 
-        if (rafRef.current === null) {
-          rafRef.current = requestAnimationFrame(() => {
-            setViewport(newVp);
-            rafRef.current = null;
-          });
+        dragViewportRef.current = newVp;
+        viewportRef.current = newVp;
+
+        // Прямой аппаратный GPU сдвиг слоя без вызова React diffing
+        if (mapContainerRef.current) {
+          mapContainerRef.current.style.transform = `translate3d(${newVp.x}px, ${newVp.y}px, 0px) scale(${newVp.scale})`;
         }
 
         if (syncCameraWithPlayer) {
           const now = Date.now();
-          if (now - lastSyncTimeRef.current > 40) {
+          if (now - lastSyncTimeRef.current > 45) {
             lastSyncTimeRef.current = now;
             syncRef.current?.send({
               type: 'VIEWPORT_SYNC',
@@ -1815,7 +1844,6 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       }
     },
     [
-      viewport,
       syncCameraWithPlayer,
       measurement.active,
       brushMode,
@@ -1824,7 +1852,6 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       markerColor,
       gasVariant,
       waterVariant,
-      calibrationDrag?.isDragging,
     ]
   );
 
@@ -1832,6 +1859,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
     (e?: React.MouseEvent) => {
       if (isDraggingRef.current) {
         isDraggingRef.current = false;
+        setViewport(dragViewportRef.current);
       }
 
       // Завершение выделения рамки калибровки сетки
@@ -1954,32 +1982,42 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
       gasVariant,
       waterVariant,
       showToast,
-      calibrationDrag?.isDragging,
     ]
   );
 
-  // 16. Зум колесом мыши с центровкой на курсоре
+  // 16. Зум колесом мыши с центровкой на курсоре (без Reflow)
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
       e.preventDefault();
-      if (!containerRef.current) return;
+      let rect = containerRectRef.current;
+      if (!rect && containerRef.current) {
+        rect = containerRef.current.getBoundingClientRect();
+        containerRectRef.current = rect;
+      }
+      if (!rect) return;
 
-      const rect = containerRef.current.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
+      const curVp = viewportRef.current;
       const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-      const newScale = Math.max(0.1, Math.min(6.0, viewport.scale * zoomFactor));
+      const newScale = Math.max(0.1, Math.min(6.0, curVp.scale * zoomFactor));
 
-      const newX = mouseX - (mouseX - viewport.x) * (newScale / viewport.scale);
-      const newY = mouseY - (mouseY - viewport.y) * (newScale / viewport.scale);
+      const newX = mouseX - (mouseX - curVp.x) * (newScale / curVp.scale);
+      const newY = mouseY - (mouseY - curVp.y) * (newScale / curVp.scale);
 
       const newVp = { x: newX, y: newY, scale: newScale };
+      viewportRef.current = newVp;
+      dragViewportRef.current = newVp;
+
+      if (mapContainerRef.current) {
+        mapContainerRef.current.style.transform = `translate3d(${newVp.x}px, ${newVp.y}px, 0px) scale(${newVp.scale})`;
+      }
       setViewport(newVp);
 
       if (syncCameraWithPlayer) {
         const now = Date.now();
-        if (now - lastSyncTimeRef.current > 40) {
+        if (now - lastSyncTimeRef.current > 45) {
           lastSyncTimeRef.current = now;
           syncRef.current?.send({
             type: 'VIEWPORT_SYNC',
@@ -1989,7 +2027,7 @@ export const DMView: React.FC<DMViewProps> = ({ onOpenPlayerWindow }) => {
         }
       }
     },
-    [viewport, syncCameraWithPlayer]
+    [syncCameraWithPlayer]
   );
 
   // 17. Отслеживание горячих клавиш

@@ -11,12 +11,17 @@ import { useSearchParams } from 'next/navigation';
 import { DMView } from '@/components/DMView';
 import { PlayerView } from '@/components/PlayerView';
 import { ExternalLink, AlertTriangle, Monitor, Shield, X } from 'lucide-react';
+import { initLegacyPolyfills } from '@/lib/legacyPolyfills';
 
 function AppContent() {
   const searchParams = useSearchParams();
   const isPlayer = searchParams?.get('mode') === 'player';
   const [overrideMode, setOverrideMode] = useState<'dm' | 'player' | null>(null);
   const [popupBlockedModal, setPopupBlockedModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    initLegacyPolyfills();
+  }, []);
 
   const currentMode = overrideMode ?? (isPlayer ? 'player' : 'dm');
 
@@ -37,6 +42,11 @@ function AppContent() {
       if (!playerWin || playerWin.closed || typeof playerWin.closed === 'undefined') {
         setPopupBlockedModal(true);
       } else {
+        try {
+          (window as any).__dnd_player_win = playerWin;
+        } catch {
+          // ignore
+        }
         playerWin.focus();
       }
     } catch (err) {
